@@ -284,6 +284,13 @@ class EMACallback(TrainerCallback):
         if self._step_count < self.update_after_step:
             return
         
+        # FIX: Reinitialize EMA with current weights after warmup
+        # Otherwise EMA contains outdated initial weights
+        if self._step_count == self.update_after_step:
+            self.ema_state = create_ema_state(model)
+            logger.info(f"EMA reinitialized after {self.update_after_step} warmup steps")
+            return
+        
         # Update only every N steps
         if self._step_count % self.update_every != 0:
             return
