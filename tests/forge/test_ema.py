@@ -199,6 +199,54 @@ class TestEMAUtils:
         assert 0.9 < decay_short < 1.0
         assert 0.99 < decay_long < 1.0
     
+    def test_compute_dynamic_decay(self):
+        """Тест расчёта динамического decay"""
+        from transformers.ema import compute_dynamic_decay
+        
+        # Начало обучения - низкий decay
+        decay_start = compute_dynamic_decay(
+            current_step=0,
+            total_steps=1000,
+            min_decay=0.9,
+            max_decay=0.999
+        )
+        
+        # Середина обучения
+        decay_mid = compute_dynamic_decay(
+            current_step=500,
+            total_steps=1000,
+            min_decay=0.9,
+            max_decay=0.999
+        )
+        
+        # Конец обучения - высокий decay
+        decay_end = compute_dynamic_decay(
+            current_step=1000,
+            total_steps=1000,
+            min_decay=0.9,
+            max_decay=0.999
+        )
+        
+        # Проверяем что decay растёт
+        assert decay_start < decay_mid < decay_end
+        assert decay_start == 0.9  # min_decay
+        assert decay_end == 0.999  # max_decay
+    
+    def test_compute_dynamic_decay_schedules(self):
+        """Тест разных schedule для dynamic decay"""
+        from transformers.ema import compute_dynamic_decay
+        
+        step = 500
+        total = 1000
+        
+        linear = compute_dynamic_decay(step, total, schedule="linear")
+        cosine = compute_dynamic_decay(step, total, schedule="cosine")
+        exponential = compute_dynamic_decay(step, total, schedule="exponential")
+        
+        # Все должны быть между min и max
+        for decay in [linear, cosine, exponential]:
+            assert 0.9 <= decay <= 0.999
+    
     def test_print_ema_info(self, capsys):
         """Тест вывода информации о EMA"""
         from transformers.ema import print_ema_info

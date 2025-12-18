@@ -188,6 +188,82 @@ def load_ema_state_dict(
 
 
 # =============================================================================
+# Dynamic Decay Scheduling
+# =============================================================================
+
+
+def compute_dynamic_decay(
+    current_step: int,
+    total_steps: int,
+    min_decay: float = 0.9,
+    max_decay: float = 0.999,
+    schedule: str = "linear"
+) -> float:
+    """
+    Compute dynamic EMA decay that increases during training.
+    
+    This solves the problem of EMA lagging behind the model on early
+    training steps. With dynamic decay:
+    - Early training: low decay (0.9) = fast adaptation
+    - Late training: high decay (0.999) = stable averaging
+    
+    Args:
+        current_step: Current training step
+        total_steps: Total expected training steps
+        min_decay: Starting decay value (default: 0.9)
+        max_decay: Final decay value (default: 0.999)
+        schedule: Type of schedule ("linear", "cosine", "exponential")
+        
+    Returns:
+        Decay value for current step
+        
+    Example:
+        >>> # Step 0: decay = 0.9 (fast adaptation)
+        >>> compute_dynamic_decay(0, 1000)
+        0.9
+        >>> # Step 500: decay = 0.9495 (middle)
+        >>> compute_dynamic_decay(500, 1000)
+        0.9495
+        >>> # Step 1000: decay = 0.999 (stable)
+        >>> compute_dynamic_decay(1000, 1000)
+        0.999
+        
+    Scientific basis:
+        Used in Stable Diffusion (Karras et al., 2022) and other
+        state-of-the-art diffusion models.
+    """
+    import math
+    
+    if total_steps <= 0:
+        return max_decay
+    
+    # Clamp progress to [0, 1]
+    progress = min(1.0, max(0.0, current_step / total_steps))
+    
+    if schedule == "linear":
+        # Linear interpolation
+        decay = min_decay + (max_decay - min_decay) * progress
+        
+    elif schedule == "cosine":
+        # Cosine schedule (smoother transition)
+        decay = min_decay + (max_decay - min_decay) * (1 - math.cos(progress * math.pi)) / 2
+        
+    elif schedule == "exponential":
+        # Exponential ramp (faster initial growth)
+        ramp_steps = total_steps * 0.3  # 30% of training for ramp
+        if current_step < ramp_steps:
+            exp_progress = 1 - math.exp(-5 * current_step / ramp_steps)
+        else:
+            exp_progress = 1.0
+        decay = min_decay + (max_decay - min_decay) * exp_progress
+        
+    else:
+        raise ValueError(f"Unknown schedule: {schedule}. Use 'linear', 'cosine', or 'exponential'")
+    
+    return decay
+
+
+# =============================================================================
 # EMA Callback for Trainer
 # =============================================================================
 
@@ -235,25 +311,53 @@ class EMACallback(TrainerCallback):
         self,
         decay: float = 0.999,
         update_after_step: int = 0,
-        update_every: int = 1
+        update_every: int = 1,
+        # Dynamic decay parameters
+        use_dynamic_decay: bool = False,
+        min_decay: float = 0.9,
+        max_decay: float = 0.999,
+        decay_schedule: str = "linear",
+        total_steps: Optional[int] = None
     ):
         self.decay = decay
         self.update_after_step = update_after_step
         self.update_every = update_every
         
+        # Dynamic decay settings
+        self.use_dynamic_decay = use_dynamic_decay
+        self.min_decay = min_decay
+        self.max_decay = max_decay
+        self.decay_schedule = decay_schedule
+        self.total_steps = total_steps
+        
         self.ema_state: Optional[Dict[str, Any]] = None
         self._step_count = 0
         self._original_state: Optional[Dict[str, Any]] = None
+        self._current_decay = decay
         
         # Validate decay
-        if not 0.0 < decay < 1.0:
+        if not use_dynamic_decay and not 0.0 < decay < 1.0:
             raise ValueError(f"decay must be in (0, 1), got {decay}")
         
-        logger.info(
-            f"EMACallback initialized: decay={decay}, "
-            f"update_after_step={update_after_step}, "
-            f"update_every={update_every}"
-        )
+        if use_dynamic_decay:
+            if not 0.0 < min_decay < 1.0:
+                raise ValueError(f"min_decay must be in (0, 1), got {min_decay}")
+            if not 0.0 < max_decay < 1.0:
+                raise ValueError(f"max_decay must be in (0, 1), got {max_decay}")
+            if min_decay >= max_decay:
+                raise ValueError(f"min_decay ({min_decay}) must be < max_decay ({max_decay})")
+            
+            logger.info(
+                f"EMACallback initialized with DYNAMIC decay: "
+                f"{min_decay} → {max_decay} ({decay_schedule} schedule), "
+                f"update_after_step={update_after_step}"
+            )
+        else:
+            logger.info(
+                f"EMACallback initialized: decay={decay}, "
+                f"update_after_step={update_after_step}, "
+                f"update_every={update_every}"
+            )
     
     def on_train_begin(self, args, state, control, model=None, **kwargs):
         """Initialize EMA state at the start of training."""
@@ -264,6 +368,17 @@ class EMACallback(TrainerCallback):
         self.ema_state = create_ema_state(model)
         self._step_count = 0
         
+        # Auto-detect total_steps if not provided
+        if self.use_dynamic_decay and self.total_steps is None:
+            if hasattr(state, 'max_steps') and state.max_steps > 0:
+                self.total_steps = state.max_steps
+                logger.info(f"Auto-detected total_steps={self.total_steps}")
+            else:
+                logger.warning(
+                    "Dynamic decay enabled but total_steps unknown. "
+                    "Using decay={self.max_decay}"
+                )
+        
         # Calculate memory usage
         total_params = sum(p.numel() for p in self.ema_state.values())
         memory_mb = total_params * 4 / (1024 * 1024)  # float32
@@ -271,6 +386,26 @@ class EMACallback(TrainerCallback):
         logger.info(
             f"EMA initialized: {total_params:,} parameters, "
             f"~{memory_mb:.1f} MB additional memory"
+        )
+    
+    def _get_current_decay(self) -> float:
+        """Get decay value for current step."""
+        if not self.use_dynamic_decay:
+            return self.decay
+        
+        if self.total_steps is None or self.total_steps <= 0:
+            return self.max_decay
+        
+        # Compute dynamic decay based on current step
+        effective_step = self._step_count - self.update_after_step
+        effective_total = self.total_steps - self.update_after_step
+        
+        return compute_dynamic_decay(
+            current_step=max(0, effective_step),
+            total_steps=max(1, effective_total),
+            min_decay=self.min_decay,
+            max_decay=self.max_decay,
+            schedule=self.decay_schedule
         )
     
     def on_step_end(self, args, state, control, model=None, **kwargs):
@@ -295,17 +430,26 @@ class EMACallback(TrainerCallback):
         if self._step_count % self.update_every != 0:
             return
         
-        update_ema_state(model, self.ema_state, self.decay)
+        # Get current decay (static or dynamic)
+        self._current_decay = self._get_current_decay()
+        
+        update_ema_state(model, self.ema_state, self._current_decay)
     
     def on_train_end(self, args, state, control, model=None, **kwargs):
         """Log EMA statistics at end of training."""
         if self.ema_state is None:
             return
         
-        logger.info(
-            f"EMA training complete: {self._step_count} steps, "
-            f"decay={self.decay}"
-        )
+        if self.use_dynamic_decay:
+            logger.info(
+                f"EMA training complete: {self._step_count} steps, "
+                f"dynamic decay {self.min_decay} → {self._current_decay:.4f}"
+            )
+        else:
+            logger.info(
+                f"EMA training complete: {self._step_count} steps, "
+                f"decay={self.decay}"
+            )
     
     def apply_ema(self, model: Any) -> Dict[str, Any]:
         """
