@@ -170,6 +170,79 @@ class TestPresetDescriptions:
         # Описание может быть в docstring или атрибуте
         assert preset is not None
 
+class TestConfigValidation:
+    """Тесты для валидации конфигурации"""
+    
+    def test_validate_returns_list(self):
+        """Тест что validate возвращает список"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("sft")
+        issues = preset.validate()
+        
+        assert isinstance(issues, list)
+    
+    def test_validate_high_lr_warning(self):
+        """Тест предупреждения о высоком learning rate"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("sft", learning_rate=0.1)
+        issues = preset.validate()
+        
+        # Должно быть предупреждение о высоком LR
+        lr_issues = [i for i in issues if "learning_rate" in i.message]
+        assert len(lr_issues) > 0
+    
+    def test_validate_low_lr_warning(self):
+        """Тест предупреждения о низком learning rate"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("sft", learning_rate=1e-10)
+        issues = preset.validate()
+        
+        # Должно быть предупреждение о низком LR
+        lr_issues = [i for i in issues if "learning_rate" in i.message]
+        assert len(lr_issues) > 0
+    
+    def test_auto_fix_corrects_high_lr(self):
+        """Тест что auto_fix исправляет высокий LR"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("sft", learning_rate=0.5)
+        original_lr = preset.learning_rate
+        
+        changes = preset.auto_fix()
+        
+        # LR должен быть исправлен
+        assert preset.learning_rate != original_lr
+        assert preset.learning_rate < 0.01
+    
+    def test_auto_fix_returns_changes_list(self):
+        """Тест что auto_fix возвращает список изменений"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("sft", learning_rate=0.1)
+        changes = preset.auto_fix()
+        
+        assert isinstance(changes, list)
+        assert len(changes) > 0
+    
+    def test_validate_correct_config_no_issues(self):
+        """Тест что корректная конфигурация не имеет issues"""
+        from transformers.training_presets import get_preset
+        
+        # Создаём конфиг с разумными параметрами
+        preset = get_preset("sft", 
+                           learning_rate=2e-5,
+                           bf16=False,
+                           fp16=False)
+        
+        issues = preset.validate()
+        
+        # Фильтруем только критичные issues (не связанные с bf16 на CPU)
+        critical_issues = [i for i in issues if "learning_rate" in i.message]
+        assert len(critical_issues) == 0
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -384,7 +384,7 @@ install_requires = [
 
 setup(
     name="transformers-forge",
-    version="1.0.4",  # Transformers Forge v1.0.4 - Dynamic EMA
+    version="1.0.5",  # Transformers Forge v1.0.5 - Config Validation
     author="Самад Абдулаев (Фиталс)",
     author_email="usnul.noxil@gmail.com",
     description="Transformers Forge: Independent community fork with EMA, layer control, training presets, and bug fixes.",

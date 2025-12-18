@@ -49,7 +49,34 @@ from .training_args import TrainingArguments
 from .utils import logging
 
 
+
 logger = logging.get_logger(__name__)
+
+
+# =============================================================================
+# Configuration Validation
+# =============================================================================
+
+
+@dataclass
+class ConfigIssue:
+    """
+    Представляет проблему в конфигурации обучения.
+    
+    Attributes:
+        level: Уровень проблемы ("warning" или "error")
+        message: Описание проблемы
+        fix_suggestion: Рекомендация по исправлению
+        auto_fixable: Можно ли автоматически исправить
+        param_name: Имя параметра (для auto_fix)
+        fixed_value: Значение для автоисправления
+    """
+    level: str  # "warning" или "error"
+    message: str
+    fix_suggestion: str
+    auto_fixable: bool = True
+    param_name: Optional[str] = None
+    fixed_value: Any = None
 
 
 # =============================================================================
@@ -215,6 +242,128 @@ class BasePreset:
     
     def __repr__(self) -> str:
         return self.summary()
+    
+    def validate(self) -> List[ConfigIssue]:
+        """
+        Проверить конфигурацию на проблемы.
+        
+        Returns:
+            Список найденных проблем
+            
+        Example:
+            >>> preset = LoRAPreset(learning_rate=0.1)
+            >>> issues = preset.validate()
+            >>> for issue in issues:
+            ...     print(f"{issue.level}: {issue.message}")
+        """
+        issues = []
+        
+        # Проверяем наличие CUDA
+        try:
+            import torch
+            has_cuda = torch.cuda.is_available()
+            has_bf16 = has_cuda and torch.cuda.is_bf16_supported()
+        except ImportError:
+            has_cuda = False
+            has_bf16 = False
+        
+        # === Проверка precision ===
+        
+        if self.bf16 and not has_cuda:
+            issues.append(ConfigIssue(
+                level="warning",
+                message="bf16=True но CUDA недоступен",
+                fix_suggestion="Использовать fp32 на CPU",
+                param_name="bf16",
+                fixed_value=False
+            ))
+        
+        if self.bf16 and has_cuda and not has_bf16:
+            issues.append(ConfigIssue(
+                level="warning",
+                message="bf16 не поддерживается на этом GPU",
+                fix_suggestion="Использовать fp16 вместо bf16",
+                param_name="bf16",
+                fixed_value=False
+            ))
+        
+        if self.fp16 and not has_cuda:
+            issues.append(ConfigIssue(
+                level="warning",
+                message="fp16=True но CUDA недоступен",
+                fix_suggestion="Использовать fp32 на CPU",
+                param_name="fp16",
+                fixed_value=False
+            ))
+        
+        # === Проверка learning rate ===
+        
+        if self.learning_rate > 1e-2:
+            issues.append(ConfigIssue(
+                level="warning",
+                message=f"learning_rate={self.learning_rate} очень высокий",
+                fix_suggestion="Для fine-tuning рекомендуется 1e-5 - 5e-4",
+                param_name="learning_rate",
+                fixed_value=2e-5
+            ))
+        
+        if self.learning_rate < 1e-7:
+            issues.append(ConfigIssue(
+                level="warning",
+                message=f"learning_rate={self.learning_rate} очень низкий",
+                fix_suggestion="Обучение будет очень медленным",
+                param_name="learning_rate",
+                fixed_value=2e-5
+            ))
+        
+        # === Проверка warmup ===
+        
+        if self.warmup_ratio > 0 and self.warmup_steps > 0:
+            issues.append(ConfigIssue(
+                level="warning",
+                message="Заданы и warmup_ratio и warmup_steps",
+                fix_suggestion="Используйте только один параметр",
+                param_name="warmup_steps",
+                fixed_value=0
+            ))
+        
+        # === Проверка batch size ===
+        
+        effective_batch = self.get_effective_batch_size()
+        if effective_batch > 128:
+            issues.append(ConfigIssue(
+                level="warning",
+                message=f"Effective batch size={effective_batch} очень большой",
+                fix_suggestion="Может привести к Out of Memory",
+                auto_fixable=False
+            ))
+        
+        return issues
+    
+    def auto_fix(self) -> List[str]:
+        """
+        Автоматически исправить проблемы в конфигурации.
+        
+        Returns:
+            Список сделанных изменений
+            
+        Example:
+            >>> preset = LoRAPreset(learning_rate=0.1)
+            >>> changes = preset.auto_fix()
+            >>> print(changes)
+            ['learning_rate: 0.1 → 2e-05']
+        """
+        issues = self.validate()
+        changes = []
+        
+        for issue in issues:
+            if issue.auto_fixable and issue.param_name and issue.fixed_value is not None:
+                old_value = getattr(self, issue.param_name)
+                setattr(self, issue.param_name, issue.fixed_value)
+                changes.append(f"{issue.param_name}: {old_value} → {issue.fixed_value}")
+                logger.info(f"Auto-fixed: {issue.param_name} = {issue.fixed_value}")
+        
+        return changes
 
 
 # =============================================================================
@@ -837,3 +986,113 @@ def print_preset_comparison():
     print(f"{'DPO':<15} {'High':<12} {'Slow':<10} {'Best':<10} {'Alignment':<20}")
     print(f"{'Memory':<15} {'Lowest':<12} {'Slower':<10} {'Good':<10} {'Limited GPU':<20}")
     print("=" * 70 + "\n")
+
+
+# =============================================================================
+# Interactive Configuration Validation
+# =============================================================================
+
+
+def validate_config(preset: BasePreset, interactive: bool = True) -> bool:
+    """
+    Интерактивная валидация конфигурации с диалогом.
+    
+    Проверяет конфигурацию на проблемы и предлагает пользователю
+    выбрать действие:
+    - [Y] Продолжить на свой риск
+    - [N] Остановить обучение
+    - [A] Автоматически исправить
+    
+    Args:
+        preset: Preset для валидации
+        interactive: Если True, показывает интерактивный диалог
+                    Если False, только логирует warnings
+                    
+    Returns:
+        True если можно продолжить обучение, False если отменено
+        
+    Example:
+        >>> from transformers.training_presets import get_preset, validate_config
+        >>> 
+        >>> preset = get_preset("qlora", output_dir="./model")
+        >>> 
+        >>> if validate_config(preset, interactive=True):
+        ...     args = preset.get_training_args()
+        ...     trainer.train()
+        ... else:
+        ...     print("Обучение отменено")
+    """
+    issues = preset.validate()
+    
+    # Нет проблем
+    if not issues:
+        print()
+        print("=" * 60)
+        print("✅ КОНФИГУРАЦИЯ КОРРЕКТНА")
+        print("=" * 60)
+        print()
+        return True
+    
+    # Показываем проблемы
+    print()
+    print("=" * 60)
+    print("⚠️  ОБНАРУЖЕНЫ ПРОБЛЕМЫ В КОНФИГУРАЦИИ")
+    print("=" * 60)
+    
+    for issue in issues:
+        icon = "⚠️" if issue.level == "warning" else "❌"
+        fixable = "[auto-fix]" if issue.auto_fixable else "[manual]"
+        print(f"  {icon} {issue.message}")
+        print(f"     💡 {issue.fix_suggestion} {fixable}")
+    
+    print("=" * 60)
+    
+    # Неинтерактивный режим
+    if not interactive:
+        print("⚠️  Режим без интерактива. Продолжаем с текущими настройками...")
+        logger.warning(f"Найдено {len(issues)} проблем в конфигурации, продолжаем без исправлений")
+        return True
+    
+    # Интерактивный диалог
+    print()
+    print("Выберите действие:")
+    print("  [Y] Продолжить на свой риск")
+    print("  [N] Остановить обучение")
+    print("  [A] Автоматически исправить")
+    print()
+    
+    while True:
+        try:
+            choice = input("Ваш выбор [Y/N/A]: ").strip().upper()
+        except EOFError:
+            # Неинтерактивный режим (pipe, CI/CD)
+            print("⚠️  Нет ввода (EOF). Продолжаем с текущими настройками...")
+            return True
+        except KeyboardInterrupt:
+            print("\n❌ Прервано пользователем.")
+            return False
+        
+        if choice == 'Y':
+            print()
+            print("⚠️  Продолжаем на свой риск...")
+            return True
+            
+        elif choice == 'N':
+            print()
+            print("❌ Обучение отменено пользователем.")
+            return False
+            
+        elif choice == 'A':
+            changes = preset.auto_fix()
+            print()
+            if changes:
+                print("✅ Автоматическое исправление:")
+                for change in changes:
+                    print(f"   • {change}")
+            else:
+                print("ℹ️  Нет автоматически исправляемых проблем.")
+            print()
+            return True
+            
+        else:
+            print("❓ Неизвестный выбор. Введите Y, N или A.")
