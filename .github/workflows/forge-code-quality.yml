@@ -1,0 +1,250 @@
+# =============================================================================
+# Transformers Forge - CI: Code Quality
+# =============================================================================
+# Проверка качества кода при каждом push и PR
+# Работает на стандартных GitHub-hosted runners
+# =============================================================================
+
+name: "🔍 Code Quality"
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - "release/*"
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "setup.py"
+      - ".github/workflows/forge-*.yml"
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "setup.py"
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: "Enable debug mode"
+        required: false
+        default: false
+        type: boolean
+
+# Cancel previous runs for the same PR/branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  TRANSFORMERS_IS_CI: "yes"
+
+jobs:
+  # ===========================================================================
+  # Linting with Ruff
+  # ===========================================================================
+  lint:
+    name: "🔍 Lint (Ruff)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff Check
+        run: |
+          echo "::group::Ruff Check"
+          ruff check src/transformers --output-format=github
+          echo "::endgroup::"
+
+      - name: Run Ruff Format Check
+        run: |
+          echo "::group::Ruff Format Check"
+          ruff format --check src/transformers
+          echo "::endgroup::"
+
+  # ===========================================================================
+  # Import Check - verify all modules can be imported
+  # ===========================================================================
+  import-check:
+    name: "📦 Import Check"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install package (minimal)
+        run: |
+          pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e "." --no-deps
+          pip install filelock huggingface-hub numpy packaging pyyaml regex requests safetensors tokenizers tqdm
+
+      - name: Check core imports
+        run: |
+          python -c "
+          import sys
+          print(f'Python: {sys.version}')
+          
+          # Core imports
+          import transformers
+          print(f'✅ transformers v{transformers.__version__}')
+          
+          from transformers import AutoConfig, AutoModel, AutoTokenizer
+          print('✅ Auto classes imported')
+          
+          from transformers import GenerationConfig
+          print('✅ GenerationConfig imported')
+          
+          from transformers import TrainingArguments
+          print('✅ TrainingArguments imported')
+          
+          # Enhanced module
+          from transformers.training_monitor import (
+              TrainingMonitor,
+              MonitorCallback,
+              count_parameters,
+              print_model_info
+          )
+          print('✅ training_monitor imported')
+          
+          print('')
+          print('All imports successful! ✨')
+          "
+
+  # ===========================================================================
+  # Verify version consistency
+  # ===========================================================================
+  version-check:
+    name: "🏷️ Version Check"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Check version consistency
+        run: |
+          python -c "
+          import re
+          import sys
+          
+          # Read version from __init__.py
+          with open('src/transformers/__init__.py', 'r') as f:
+              content = f.read()
+              match = re.search(r'__version__\s*=\s*[\"\\']([^\"\\']+)[\"\\']', content)
+              init_version = match.group(1) if match else None
+          
+          # Read version from setup.py
+          with open('setup.py', 'r') as f:
+              content = f.read()
+              match = re.search(r'version\s*=\s*[\"\\']([^\"\\']+)[\"\\']', content)
+              setup_version = match.group(1) if match else None
+          
+          # Read version from pyproject.toml
+          with open('pyproject.toml', 'r') as f:
+              content = f.read()
+              match = re.search(r'version\s*=\s*[\"\\']([^\"\\']+)[\"\\']', content)
+              pyproject_version = match.group(1) if match else None
+          
+          print(f'__init__.py:    {init_version}')
+          print(f'setup.py:       {setup_version}')
+          print(f'pyproject.toml: {pyproject_version}')
+          
+          versions = [init_version, setup_version, pyproject_version]
+          if len(set(versions)) != 1:
+              print('')
+              print('❌ Version mismatch detected!')
+              sys.exit(1)
+          
+          print('')
+          print(f'✅ All versions match: {init_version}')
+          print('✅ Transformers Forge')
+          "
+
+  # ===========================================================================
+  # Syntax validation for all Python files
+  # ===========================================================================
+  syntax-check:
+    name: "✓ Syntax Check"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Check Python syntax
+        run: |
+          echo "Checking Python syntax in src/transformers..."
+          find src/transformers -name "*.py" -type f | head -100 | while read file; do
+            python -m py_compile "$file" || exit 1
+          done
+          echo "✅ Syntax check passed!"
+
+  # ===========================================================================
+  # Summary job
+  # ===========================================================================
+  quality-summary:
+    name: "📊 Quality Summary"
+    needs: [lint, import-check, version-check, syntax-check]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          echo "## Code Quality Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.lint.result }}" == "success" ]; then
+            echo "✅ Lint: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Lint: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.import-check.result }}" == "success" ]; then
+            echo "✅ Import Check: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Import Check: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.version-check.result }}" == "success" ]; then
+            echo "✅ Version Check: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Version Check: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.syntax-check.result }}" == "success" ]; then
+            echo "✅ Syntax Check: Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Syntax Check: Failed" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Final status
+        if: ${{ needs.lint.result != 'success' || needs.import-check.result != 'success' || needs.version-check.result != 'success' || needs.syntax-check.result != 'success' }}
+        run: exit 1

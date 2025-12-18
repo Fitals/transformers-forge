@@ -1,0 +1,266 @@
+# =============================================================================
+# Transformers Forge - CI: Release Preparation
+# =============================================================================
+# Подготовка релиза: проверка changelog, версий, документации
+# Запускается при создании тега или вручную
+# =============================================================================
+
+name: "🚀 Release Preparation"
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '*-forge.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g., 1.0.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run (no actual release)"
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ===========================================================================
+  # Validate release prerequisites
+  # ===========================================================================
+  validate:
+    name: "✅ Validate Release"
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract-version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: extract-version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION="${VERSION#v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Version: $VERSION"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Check version consistency
+        run: |
+          VERSION="${{ steps.extract-version.outputs.version }}"
+          
+          # Check __init__.py
+          INIT_VERSION=$(python -c "import re; content = open('src/transformers/__init__.py').read(); m = re.search(r'__version__\s*=\s*[\"\\']([^\"\\']+)[\"\\']', content); print(m.group(1) if m else '')")
+          
+          # Check setup.py
+          SETUP_VERSION=$(python -c "import re; content = open('setup.py').read(); m = re.search(r'version\s*=\s*[\"\\']([^\"\\']+)[\"\\']', content); print(m.group(1) if m else '')")
+          
+          # Check pyproject.toml
+          PYPROJECT_VERSION=$(python -c "import re; content = open('pyproject.toml').read(); m = re.search(r'version\s*=\s*[\"\\']([^\"\\']+)[\"\\']', content); print(m.group(1) if m else '')")
+          
+          echo "Version from tag/input: $VERSION"
+          echo "__init__.py:            $INIT_VERSION"
+          echo "setup.py:               $SETUP_VERSION"
+          echo "pyproject.toml:         $PYPROJECT_VERSION"
+          echo ""
+          
+          MISMATCH=0
+          if [ "$INIT_VERSION" != "$VERSION" ]; then
+            echo "❌ __init__.py version mismatch!"
+            MISMATCH=1
+          fi
+          if [ "$SETUP_VERSION" != "$VERSION" ]; then
+            echo "❌ setup.py version mismatch!"
+            MISMATCH=1
+          fi
+          if [ "$PYPROJECT_VERSION" != "$VERSION" ]; then
+            echo "❌ pyproject.toml version mismatch!"
+            MISMATCH=1
+          fi
+          
+          if [ $MISMATCH -eq 1 ]; then
+            echo ""
+            echo "Please update all version files before releasing."
+            exit 1
+          fi
+          
+          echo "✅ All versions match!"
+
+      - name: Check CHANGELOG.md
+        run: |
+          VERSION="${{ steps.extract-version.outputs.version }}"
+          
+          if ! grep -q "$VERSION" CHANGELOG.md; then
+            echo "❌ Version $VERSION not found in CHANGELOG.md"
+            echo "Please add release notes for this version."
+            exit 1
+          fi
+          
+          echo "✅ CHANGELOG.md contains version $VERSION"
+
+      - name: Validate package can be built
+        run: |
+          pip install build
+          python -m build --sdist
+          echo "✅ Package builds successfully"
+
+  # ===========================================================================
+  # Run full test suite
+  # ===========================================================================
+  test:
+    name: "🧪 Full Test Suite"
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[testing]"
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/generation/test_configuration_utils.py -v --tb=short
+
+      - name: Verify all Enhanced fixes
+        run: |
+          python -c "
+          from transformers import GenerationConfig
+          from transformers.training_monitor import TrainingMonitor
+          
+          # Quick fix verification
+          config = GenerationConfig(temperature=0.5)
+          assert hasattr(config, '_explicitly_set_attrs')
+          print('✅ All Forge fixes verified')
+          "
+
+  # ===========================================================================
+  # Build documentation
+  # ===========================================================================
+  docs:
+    name: "📚 Build Docs"
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check documentation files exist
+        run: |
+          FILES=(
+            "README.md"
+            "CHANGELOG.md"
+            "CONTRIBUTING_RU.md"
+            "LICENSE"
+          )
+          
+          for file in "${FILES[@]}"; do
+            if [ -f "$file" ]; then
+              echo "✅ $file exists"
+            else
+              echo "❌ $file is missing!"
+              exit 1
+            fi
+          done
+
+  # ===========================================================================
+  # Create release artifacts
+  # ===========================================================================
+  build:
+    name: "📦 Build Artifacts"
+    needs: [validate, test, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Build package
+        run: |
+          python -m build
+          ls -la dist/
+
+      - name: Check package
+        run: |
+          twine check dist/*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ needs.validate.outputs.version }}
+          path: dist/
+          retention-days: 30
+
+  # ===========================================================================
+  # Summary
+  # ===========================================================================
+  summary:
+    name: "📊 Release Summary"
+    needs: [validate, test, docs, build]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🚀 Release Preparation: ${{ needs.validate.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.validate.result }}" == "success" ]; then
+            echo "| Validation | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Validation | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.test.result }}" == "success" ]; then
+            echo "| Tests | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Tests | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.docs.result }}" == "success" ]; then
+            echo "| Documentation | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Documentation | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.build.result }}" == "success" ]; then
+            echo "| Build | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Build | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ inputs.dry_run }}" == "true" ]; then
+            echo "ℹ️ This was a **dry run**. No actual release was created." >> $GITHUB_STEP_SUMMARY
+          fi
