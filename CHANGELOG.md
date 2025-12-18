@@ -7,6 +7,47 @@
 
 ---
 
+## [1.0.1] - 2024-12-18 — Документация и Тесты
+
+### 📚 Документация
+
+- **docs/index.md** — Главная страница документации
+- **docs/api/** — API Reference для всех модулей:
+  - `ema.md` — Документация EMA
+  - `layer_utils.md` — Документация Layer Utils
+  - `training_presets.md` — Документация Training Presets
+  - `training_monitor.md` — Документация Training Monitor
+- **docs/tutorials/** — Гайды и tutorials:
+  - `quickstart.md` — Быстрый старт
+  - `ema_guide.md` — Подробный гайд по EMA
+  - `finetuning.md` — Полный гайд по fine-tuning
+
+### 💻 Примеры
+
+- **examples/forge_examples/** — Рабочие примеры кода:
+  - `ema_example.py` — Пример использования EMA
+  - `layer_freezing_example.py` — Пример заморозки слоёв
+  - `training_presets_example.py` — Пример Training Presets
+
+### 🧪 Тесты
+
+- **tests/forge/** — Unit тесты для всех модулей:
+  - `test_ema.py` — Тесты EMA
+  - `test_layer_utils.py` — Тесты Layer Utils
+  - `test_training_presets.py` — Тесты Training Presets
+  - `test_training_monitor.py` — Тесты Training Monitor
+
+### 🏛️ Структура проекта
+
+- **ROADMAP.md** — План развития проекта
+- **GOVERNANCE.md** — Модель управления
+- **.github/ISSUE_TEMPLATE/** — Шаблоны для Issues:
+  - `bug_report.md`
+  - `feature_request.md`
+  - `question.md`
+
+---
+
 ## [1.0.0] - 2024-12-18 — Первый релиз Transformers Forge!
 
 ### ✨ Новые возможности (New Features)
