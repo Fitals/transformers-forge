@@ -1,0 +1,3 @@
+{"messages": [{"role": "system", "content": "Ты полезный AI помощник."}, {"role": "user", "content": "Что такое Python?"}, {"role": "assistant", "content": "Python — высокоуровневый язык программирования с простым синтаксисом."}]}
+{"messages": [{"role": "system", "content": "Ты полезный AI помощник."}, {"role": "user", "content": "Что такое машинное обучение?"}, {"role": "assistant", "content": "<think>\nПользователь спрашивает про ML. Нужно объяснить простым языком.\n</think>\n\nМашинное обучение — это раздел ИИ, где алгоритмы учатся на данных."}]}
+{"messages": [{"role": "user", "content": "Привет!"}, {"role": "assistant", "content": "Здравствуйте! Чем могу помочь?"}]}
