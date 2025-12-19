@@ -7,6 +7,53 @@
 
 ---
 
+## [1.0.7] - 2025-12-19 — Smart Training Callbacks
+
+### ✨ Новые возможности
+
+- **EarlyStoppingCallback** — Автоматическая остановка при переобучении
+  - Мониторит eval_loss или любую метрику
+  - Настраиваемый patience (терпение)
+  - Поддержка min_delta для минимального улучшения
+  - Режимы "min" и "max"
+
+- **ReduceLROnPlateauCallback** — Снижение LR при стагнации
+  - Автоматически снижает learning rate при plateau
+  - Настраиваемый factor (0.5 = половина)
+  - Минимальный LR порог
+
+- **BestModelCallback** — Автосохранение лучшей модели
+  - Сохраняет модель при улучшении метрики
+  - Сохраняет tokenizer если передан
+  - Логирует шаг и значение метрики
+
+### 📈 Использование
+
+```python
+from transformers import Trainer
+from transformers.training_monitor import (
+    EarlyStoppingCallback,
+    ReduceLROnPlateauCallback,
+    BestModelCallback
+)
+
+trainer = Trainer(
+    model=model,
+    args=args,
+    callbacks=[
+        EarlyStoppingCallback(patience=3),
+        ReduceLROnPlateauCallback(factor=0.5, patience=2),
+        BestModelCallback(save_path="./best_model")
+    ]
+)
+```
+
+### 🧪 Тесты
+
+- 92 unit теста (100% проходят)
+
+---
+
 ## [1.0.6] - 2025-12-19 — Rich Training Progress + Utilities
 
 ### ✨ Новые возможности

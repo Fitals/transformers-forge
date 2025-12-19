@@ -416,3 +416,112 @@ Step  1250/5000 | [██████████░░░░░░░░░░�
 - **↑** — loss увеличивается (внимание)
 - **→** — loss стабилен
 
+---
+
+## 🆕 Smart Training Callbacks (v1.0.7)
+
+### EarlyStoppingCallback
+
+```python
+class EarlyStoppingCallback(TrainerCallback):
+    def __init__(
+        self,
+        patience: int = 3,
+        metric: str = "eval_loss",
+        min_delta: float = 0.0,
+        mode: str = "min",
+        verbose: bool = True
+    )
+```
+
+Автоматически останавливает обучение когда метрика перестаёт улучшаться.
+
+```python
+from transformers.training_monitor import EarlyStoppingCallback
+
+trainer = Trainer(
+    model=model,
+    args=args,
+    callbacks=[EarlyStoppingCallback(patience=3)]
+)
+```
+
+**Вывод:**
+```
+📊 EarlyStopping: Initial eval_loss=0.5234
+📈 EarlyStopping: eval_loss improved to 0.4521
+⏳ EarlyStopping: No improvement (1/3)
+⏳ EarlyStopping: No improvement (2/3)
+⏳ EarlyStopping: No improvement (3/3)
+
+🛑 EARLY STOPPING at epoch 5.0
+   Best eval_loss: 0.4521
+```
+
+---
+
+### ReduceLROnPlateauCallback
+
+```python
+class ReduceLROnPlateauCallback(TrainerCallback):
+    def __init__(
+        self,
+        factor: float = 0.5,
+        patience: int = 2,
+        min_lr: float = 1e-7,
+        metric: str = "eval_loss",
+        mode: str = "min",
+        verbose: bool = True
+    )
+```
+
+Автоматически снижает learning rate при стагнации.
+
+```python
+from transformers.training_monitor import ReduceLROnPlateauCallback
+
+trainer = Trainer(
+    model=model,
+    args=args,
+    callbacks=[ReduceLROnPlateauCallback(factor=0.5, patience=2)]
+)
+```
+
+---
+
+### BestModelCallback
+
+```python
+class BestModelCallback(TrainerCallback):
+    def __init__(
+        self,
+        save_path: str = "./best_model",
+        metric: str = "eval_loss",
+        mode: str = "min",
+        verbose: bool = True
+    )
+```
+
+Автоматически сохраняет лучшую модель по метрике.
+
+```python
+from transformers.training_monitor import BestModelCallback
+
+trainer = Trainer(
+    model=model,
+    args=args,
+    callbacks=[BestModelCallback(save_path="./best")]
+)
+```
+
+**Вывод:**
+```
+💾 BEST MODEL SAVED: eval_loss=0.4521
+   Path: ./best
+   Step: 1500
+
+✅ Best model summary:
+   eval_loss: 0.4521
+   Saved at step: 1500
+   Path: ./best
+```

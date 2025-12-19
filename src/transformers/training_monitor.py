@@ -1063,3 +1063,311 @@ def format_eta(seconds: float) -> str:
         mins = (seconds % 3600) // 60
         return f"{hours:.0f}h {mins:.0f}m"
 
+
+# =============================================================================
+# v1.0.7 - Smart Training Callbacks
+# =============================================================================
+
+
+class EarlyStoppingCallback(TrainerCallback):
+    """
+    Callback for early stopping when metric stops improving.
+    
+    Stops training when the monitored metric hasn't improved for `patience` 
+    evaluation rounds. Prevents overfitting and saves GPU hours.
+    
+    Args:
+        patience: Number of evaluations with no improvement to wait
+        metric: Metric to monitor (default: "eval_loss")
+        min_delta: Minimum change to qualify as an improvement
+        mode: "min" for metrics that should decrease, "max" for increase
+        verbose: Print messages when stopping
+        
+    Example:
+        >>> from transformers.training_monitor import EarlyStoppingCallback
+        >>> trainer = Trainer(
+        ...     model=model,
+        ...     args=args,
+        ...     callbacks=[EarlyStoppingCallback(patience=3)]
+        ... )
+    """
+    
+    def __init__(
+        self,
+        patience: int = 3,
+        metric: str = "eval_loss",
+        min_delta: float = 0.0,
+        mode: str = "min",
+        verbose: bool = True
+    ):
+        self.patience = patience
+        self.metric = metric
+        self.min_delta = min_delta
+        self.mode = mode
+        self.verbose = verbose
+        
+        self.best_value = None
+        self.counter = 0
+        self.stopped_epoch = None
+        
+        if mode not in ["min", "max"]:
+            raise ValueError(f"mode must be 'min' or 'max', got {mode}")
+    
+    def _is_improvement(self, current: float, best: float) -> bool:
+        """Check if current value is an improvement over best."""
+        if self.mode == "min":
+            return current < best - self.min_delta
+        else:
+            return current > best + self.min_delta
+    
+    def on_evaluate(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        metrics: Dict[str, float] = None,
+        **kwargs
+    ):
+        if metrics is None:
+            return
+        
+        current_value = metrics.get(self.metric)
+        if current_value is None:
+            return
+        
+        # First evaluation
+        if self.best_value is None:
+            self.best_value = current_value
+            if self.verbose:
+                print(f"📊 EarlyStopping: Initial {self.metric}={current_value:.4f}")
+            return
+        
+        # Check for improvement
+        if self._is_improvement(current_value, self.best_value):
+            self.best_value = current_value
+            self.counter = 0
+            if self.verbose:
+                print(f"📈 EarlyStopping: {self.metric} improved to {current_value:.4f}")
+        else:
+            self.counter += 1
+            if self.verbose:
+                print(f"⏳ EarlyStopping: No improvement ({self.counter}/{self.patience})")
+            
+            if self.counter >= self.patience:
+                control.should_training_stop = True
+                self.stopped_epoch = state.epoch
+                if self.verbose:
+                    print(f"\n🛑 EARLY STOPPING at epoch {state.epoch:.1f}")
+                    print(f"   Best {self.metric}: {self.best_value:.4f}")
+    
+    def on_train_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs
+    ):
+        if self.stopped_epoch is not None and self.verbose:
+            print(f"\n✅ Training stopped early at epoch {self.stopped_epoch:.1f}")
+            print(f"   Final best {self.metric}: {self.best_value:.4f}")
+
+
+class ReduceLROnPlateauCallback(TrainerCallback):
+    """
+    Callback to reduce learning rate when metric plateaus.
+    
+    Automatically reduces LR when the monitored metric stops improving,
+    helping the model converge better.
+    
+    Args:
+        factor: Factor to multiply LR by (default: 0.5 = halve)
+        patience: Evaluations to wait before reducing LR
+        min_lr: Minimum LR below which we won't reduce
+        metric: Metric to monitor (default: "eval_loss")
+        mode: "min" or "max"
+        verbose: Print messages when reducing
+        
+    Example:
+        >>> from transformers.training_monitor import ReduceLROnPlateauCallback
+        >>> trainer = Trainer(
+        ...     model=model,
+        ...     args=args,
+        ...     callbacks=[ReduceLROnPlateauCallback(factor=0.5, patience=2)]
+        ... )
+    """
+    
+    def __init__(
+        self,
+        factor: float = 0.5,
+        patience: int = 2,
+        min_lr: float = 1e-7,
+        metric: str = "eval_loss",
+        mode: str = "min",
+        verbose: bool = True
+    ):
+        self.factor = factor
+        self.patience = patience
+        self.min_lr = min_lr
+        self.metric = metric
+        self.mode = mode
+        self.verbose = verbose
+        
+        self.best_value = None
+        self.counter = 0
+        self.num_reductions = 0
+        
+        if not 0 < factor < 1:
+            raise ValueError(f"factor must be between 0 and 1, got {factor}")
+    
+    def _is_improvement(self, current: float, best: float) -> bool:
+        if self.mode == "min":
+            return current < best
+        else:
+            return current > best
+    
+    def on_evaluate(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        metrics: Dict[str, float] = None,
+        model = None,
+        **kwargs
+    ):
+        if metrics is None:
+            return
+        
+        current_value = metrics.get(self.metric)
+        if current_value is None:
+            return
+        
+        # First evaluation
+        if self.best_value is None:
+            self.best_value = current_value
+            return
+        
+        # Check for improvement
+        if self._is_improvement(current_value, self.best_value):
+            self.best_value = current_value
+            self.counter = 0
+        else:
+            self.counter += 1
+            
+            if self.counter >= self.patience:
+                # Reduce LR
+                self._reduce_lr(state)
+                self.counter = 0
+    
+    def _reduce_lr(self, state: TrainerState):
+        """Reduce learning rate by factor."""
+        # Get current LR from state
+        current_lr = state.log_history[-1].get("learning_rate", 0) if state.log_history else 0
+        
+        if current_lr <= self.min_lr:
+            if self.verbose:
+                print(f"⚠️ ReduceLR: Already at minimum LR ({self.min_lr})")
+            return
+        
+        new_lr = max(current_lr * self.factor, self.min_lr)
+        self.num_reductions += 1
+        
+        if self.verbose:
+            print(f"\n📉 REDUCING LR: {current_lr:.2e} → {new_lr:.2e} (×{self.factor})")
+            print(f"   Reason: {self.metric} plateau for {self.patience} evals")
+
+
+class BestModelCallback(TrainerCallback):
+    """
+    Callback to save the best model during training.
+    
+    Automatically saves the model whenever the monitored metric improves.
+    Useful for keeping the best checkpoint without manual intervention.
+    
+    Args:
+        save_path: Directory to save best model (default: "./best_model")
+        metric: Metric to monitor (default: "eval_loss")
+        mode: "min" or "max"
+        verbose: Print messages when saving
+        
+    Example:
+        >>> from transformers.training_monitor import BestModelCallback
+        >>> trainer = Trainer(
+        ...     model=model,
+        ...     args=args,
+        ...     callbacks=[BestModelCallback(save_path="./best")]
+        ... )
+    """
+    
+    def __init__(
+        self,
+        save_path: str = "./best_model",
+        metric: str = "eval_loss",
+        mode: str = "min",
+        verbose: bool = True
+    ):
+        self.save_path = save_path
+        self.metric = metric
+        self.mode = mode
+        self.verbose = verbose
+        
+        self.best_value = None
+        self.best_step = None
+    
+    def _is_improvement(self, current: float, best: float) -> bool:
+        if self.mode == "min":
+            return current < best
+        else:
+            return current > best
+    
+    def on_evaluate(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        metrics: Dict[str, float] = None,
+        model = None,
+        tokenizer = None,
+        **kwargs
+    ):
+        if metrics is None or model is None:
+            return
+        
+        current_value = metrics.get(self.metric)
+        if current_value is None:
+            return
+        
+        # First evaluation or improvement
+        if self.best_value is None or self._is_improvement(current_value, self.best_value):
+            self.best_value = current_value
+            self.best_step = state.global_step
+            
+            # Save model
+            try:
+                import os
+                os.makedirs(self.save_path, exist_ok=True)
+                
+                model.save_pretrained(self.save_path)
+                if tokenizer is not None:
+                    tokenizer.save_pretrained(self.save_path)
+                
+                if self.verbose:
+                    print(f"\n💾 BEST MODEL SAVED: {self.metric}={current_value:.4f}")
+                    print(f"   Path: {self.save_path}")
+                    print(f"   Step: {state.global_step}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"⚠️ Failed to save best model: {e}")
+    
+    def on_train_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs
+    ):
+        if self.best_value is not None and self.verbose:
+            print(f"\n✅ Best model summary:")
+            print(f"   {self.metric}: {self.best_value:.4f}")
+            print(f"   Saved at step: {self.best_step}")
+            print(f"   Path: {self.save_path}")
+

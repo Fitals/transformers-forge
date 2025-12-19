@@ -426,6 +426,92 @@ class TestFormatEta:
         result = format_eta(-10)
         assert "..." in result
 
+class TestSmartCallbacks:
+    """Тесты для Smart Training Callbacks v1.0.7"""
+    
+    def test_early_stopping_init(self):
+        """Тест инициализации EarlyStoppingCallback"""
+        from transformers.training_monitor import EarlyStoppingCallback
+        
+        callback = EarlyStoppingCallback(patience=5, metric="eval_loss")
+        
+        assert callback.patience == 5
+        assert callback.metric == "eval_loss"
+        assert callback.mode == "min"
+        assert callback.best_value is None
+    
+    def test_early_stopping_invalid_mode(self):
+        """Тест неправильного mode"""
+        from transformers.training_monitor import EarlyStoppingCallback
+        
+        with pytest.raises(ValueError):
+            EarlyStoppingCallback(mode="invalid")
+    
+    def test_early_stopping_is_improvement_min(self):
+        """Тест _is_improvement для mode=min"""
+        from transformers.training_monitor import EarlyStoppingCallback
+        
+        callback = EarlyStoppingCallback(mode="min", min_delta=0.01)
+        
+        # Улучшение: current < best - min_delta
+        assert callback._is_improvement(0.5, 0.6) == True
+        assert callback._is_improvement(0.59, 0.6) == False  # не достаточно
+    
+    def test_early_stopping_is_improvement_max(self):
+        """Тест _is_improvement для mode=max"""
+        from transformers.training_monitor import EarlyStoppingCallback
+        
+        callback = EarlyStoppingCallback(mode="max", min_delta=0.01)
+        
+        # Улучшение: current > best + min_delta
+        assert callback._is_improvement(0.7, 0.6) == True
+        assert callback._is_improvement(0.61, 0.6) == False  # не достаточно
+    
+    def test_reduce_lr_init(self):
+        """Тест инициализации ReduceLROnPlateauCallback"""
+        from transformers.training_monitor import ReduceLROnPlateauCallback
+        
+        callback = ReduceLROnPlateauCallback(factor=0.5, patience=2)
+        
+        assert callback.factor == 0.5
+        assert callback.patience == 2
+        assert callback.min_lr == 1e-7
+    
+    def test_reduce_lr_invalid_factor(self):
+        """Тест неправильного factor"""
+        from transformers.training_monitor import ReduceLROnPlateauCallback
+        
+        with pytest.raises(ValueError):
+            ReduceLROnPlateauCallback(factor=1.5)
+        
+        with pytest.raises(ValueError):
+            ReduceLROnPlateauCallback(factor=0)
+    
+    def test_best_model_init(self):
+        """Тест инициализации BestModelCallback"""
+        from transformers.training_monitor import BestModelCallback
+        
+        callback = BestModelCallback(save_path="./best", metric="eval_accuracy", mode="max")
+        
+        assert callback.save_path == "./best"
+        assert callback.metric == "eval_accuracy"
+        assert callback.mode == "max"
+        assert callback.best_value is None
+    
+    def test_best_model_is_improvement(self):
+        """Тест _is_improvement для BestModelCallback"""
+        from transformers.training_monitor import BestModelCallback
+        
+        # mode=min (loss)
+        callback_min = BestModelCallback(mode="min")
+        assert callback_min._is_improvement(0.3, 0.5) == True
+        assert callback_min._is_improvement(0.6, 0.5) == False
+        
+        # mode=max (accuracy)
+        callback_max = BestModelCallback(mode="max")
+        assert callback_max._is_improvement(0.9, 0.8) == True
+        assert callback_max._is_improvement(0.7, 0.8) == False
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
