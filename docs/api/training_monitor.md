@@ -344,3 +344,75 @@ trainer.train()
 1. **GPU:** Функции GPU работают только с CUDA
 2. **Производительность:** `check_gradients` добавляет небольшой overhead
 3. **Совместимость:** Работает с любой PyTorch моделью
+
+---
+
+## 🆕 ProgressCallback (v1.0.6)
+
+```python
+class ProgressCallback(TrainerCallback):
+    def __init__(
+        self,
+        show_eta: bool = True,
+        show_loss: bool = True,
+        show_speed: bool = True,
+        show_gpu_mem: bool = True,
+        bar_width: int = 25,
+        use_unicode: bool = True
+    )
+```
+
+Красивый прогресс-бар с ETA и метриками. **Альтернатива tqdm без внешних зависимостей.**
+
+### Использование
+
+```python
+from transformers import Trainer
+from transformers.training_monitor import ProgressCallback
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    callbacks=[ProgressCallback()]
+)
+trainer.train()
+```
+
+### Пример вывода
+
+```
+╔══════════════════════════════════════════════════════════╗
+║  🔥 TRAINING STARTED                                     ║
+║  Model: GPT2LMHeadModel                                  ║
+║  Max Steps: 5000                                         ║
+╚══════════════════════════════════════════════════════════╝
+
+Step  1250/5000 | [██████████░░░░░░░░░░░░░░░] | 25.0% | ETA: 15m 32s | 12.4 it/s | loss: 0.4521↓
+
+╔══════════════════════════════════════════════════════════╗
+║  ✅ TRAINING COMPLETE                                    ║
+╠══════════════════════════════════════════════════════════╣
+║  Total Steps:                                     5000   ║
+║  Total Time:                                    20m 15s  ║
+║  Average Speed:                              4.12 it/s   ║
+║  Final Loss:                                   0.2134    ║
+╚══════════════════════════════════════════════════════════╝
+```
+
+### Параметры
+
+| Параметр | По умолчанию | Описание |
+|----------|--------------|----------|
+| `show_eta` | `True` | Показывать оставшееся время |
+| `show_loss` | `True` | Показывать loss с индикатором |
+| `show_speed` | `True` | Показывать скорость (it/s) |
+| `show_gpu_mem` | `True` | Показывать GPU память |
+| `bar_width` | `25` | Ширина прогресс-бара |
+| `use_unicode` | `True` | Использовать Unicode символы (█░) |
+
+### Индикаторы loss
+
+- **↓** — loss уменьшается (хорошо)
+- **↑** — loss увеличивается (внимание)
+- **→** — loss стабилен
+

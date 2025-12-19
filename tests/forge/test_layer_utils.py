@@ -268,6 +268,56 @@ class TestFreezeByName:
         assert all(not p.requires_grad for p in model.embed_tokens.parameters())
         assert all(not p.requires_grad for p in model.lm_head.parameters())
 
+class TestNewUtilities:
+    """Тесты для новых утилит v1.0.7"""
+    
+    @pytest.fixture
+    def model(self):
+        """Создаём тестовую модель"""
+        return SimpleTransformerModel(num_layers=4)
+    
+    def test_get_layer_names(self, model):
+        """Тест get_layer_names"""
+        from transformers.layer_utils import get_layer_names
+        
+        # Без параметров
+        names = get_layer_names(model)
+        assert isinstance(names, list)
+        assert len(names) > 0
+        
+        # С параметрами
+        names_with_params = get_layer_names(model, include_params=True)
+        assert len(names_with_params) > len(names)
+    
+    def test_estimate_training_time(self, model):
+        """Тест estimate_training_time"""
+        from transformers.layer_utils import estimate_training_time
+        
+        estimate = estimate_training_time(
+            model=model,
+            num_samples=10000,
+            batch_size=8,
+            num_epochs=3
+        )
+        
+        assert "total_steps" in estimate
+        assert "formatted" in estimate
+        assert estimate["total_steps"] > 0
+        assert "h" in estimate["formatted"]
+    
+    def test_print_model_summary(self, model, capsys):
+        """Тест print_model_summary"""
+        from transformers.layer_utils import print_model_summary
+        
+        # Вызываем функцию
+        print_model_summary(model)
+        
+        # Проверяем что был вывод
+        captured = capsys.readouterr()
+        assert "MODEL SUMMARY" in captured.out
+        assert "Parameters" in captured.out
+        assert "Trainable" in captured.out
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

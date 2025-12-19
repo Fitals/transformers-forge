@@ -843,3 +843,207 @@ def get_memory_savings_estimate(model: Any) -> Dict[str, float]:
         "optimizer_saved_gb": frozen_optim_bytes / (1024**3),
         "total_saved_gb": (frozen_gradient_bytes + frozen_optim_bytes) / (1024**3),
     }
+
+
+# =============================================================================
+# v1.0.7 - New Utility Functions
+# =============================================================================
+
+
+def get_layer_names(model: Any, include_params: bool = False) -> List[str]:
+    """
+    Get list of all layer/module names in the model.
+    
+    Useful for debugging and understanding model structure.
+    
+    Args:
+        model: PyTorch model
+        include_params: If True, include parameter names (weight, bias)
+        
+    Returns:
+        List of layer names
+        
+    Example:
+        >>> names = get_layer_names(model)
+        >>> print(names[:5])
+        ['embeddings', 'encoder.layer.0', 'encoder.layer.1', ...]
+    """
+    if include_params:
+        return [name for name, _ in model.named_parameters()]
+    else:
+        return [name for name, _ in model.named_modules() if name]
+
+
+def estimate_training_time(
+    model: Any,
+    num_samples: int,
+    batch_size: int,
+    num_epochs: int,
+    ms_per_step: float = 500.0
+) -> Dict[str, Any]:
+    """
+    Estimate training time before starting.
+    
+    Args:
+        model: PyTorch model
+        num_samples: Total training samples
+        batch_size: Batch size
+        num_epochs: Number of epochs
+        ms_per_step: Estimated milliseconds per step (default 500ms)
+        
+    Returns:
+        Dict with time estimates
+        
+    Example:
+        >>> estimate = estimate_training_time(model, 10000, 8, 3)
+        >>> print(f"Estimated: {estimate['formatted']}")
+    """
+    steps_per_epoch = (num_samples + batch_size - 1) // batch_size
+    total_steps = steps_per_epoch * num_epochs
+    
+    total_ms = total_steps * ms_per_step
+    total_seconds = total_ms / 1000
+    
+    hours = int(total_seconds // 3600)
+    minutes = int((total_seconds % 3600) // 60)
+    seconds = int(total_seconds % 60)
+    
+    trainable = get_trainable_params(model)
+    
+    return {
+        "steps_per_epoch": steps_per_epoch,
+        "total_steps": total_steps,
+        "total_seconds": total_seconds,
+        "hours": hours,
+        "minutes": minutes,
+        "seconds": seconds,
+        "formatted": f"{hours}h {minutes}m {seconds}s",
+        "trainable_params": trainable,
+    }
+
+
+def print_model_summary(model: Any, max_depth: int = 3) -> None:
+    """
+    Print a beautiful model summary similar to Keras model.summary().
+    
+    Shows model structure, parameter counts, and memory estimates.
+    
+    Args:
+        model: PyTorch model
+        max_depth: Maximum depth of nested modules to show (default 3)
+        
+    Example:
+        >>> print_model_summary(model)
+        
+        ╔══════════════════════════════════════════════════════════════════════╗
+        ║  📊 MODEL SUMMARY                                                    ║
+        ╠══════════════════════════════════════════════════════════════════════╣
+        ║  Model: GPT2LMHeadModel                                              ║
+        ║  Total Parameters: 124,439,808                                       ║
+        ║  Trainable: 124,439,808 (100.0%)                                     ║
+        ║  Frozen: 0 (0.0%)                                                    ║
+        ╠══════════════════════════════════════════════════════════════════════╣
+        ║  Layer                              │ Parameters │ Trainable         ║
+        ╠══════════════════════════════════════════════════════════════════════╣
+        ║  transformer.wte                    │ 38,597,376 │ ✓                 ║
+        ║  transformer.wpe                    │    786,432 │ ✓                 ║
+        ║  transformer.h.0                    │  7,087,872 │ ✓                 ║
+        ║  ...                                │            │                   ║
+        ╚══════════════════════════════════════════════════════════════════════╝
+    """
+    import torch
+    
+    # Get model info
+    model_name = model.__class__.__name__
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    frozen_params = total_params - trainable_params
+    
+    trainable_pct = (trainable_params / total_params * 100) if total_params > 0 else 0
+    frozen_pct = (frozen_params / total_params * 100) if total_params > 0 else 0
+    
+    # Memory estimate (float32 = 4 bytes, float16 = 2 bytes)
+    dtype = next(model.parameters()).dtype if total_params > 0 else torch.float32
+    bytes_per_param = 2 if dtype in [torch.float16, torch.bfloat16] else 4
+    memory_mb = (total_params * bytes_per_param) / (1024 * 1024)
+    
+    # Box drawing characters
+    BOX_TL = "╔"
+    BOX_TR = "╗"
+    BOX_BL = "╚"
+    BOX_BR = "╝"
+    BOX_H = "═"
+    BOX_V = "║"
+    BOX_ML = "╠"
+    BOX_MR = "╣"
+    
+    width = 72
+    
+    def line(left, content, right):
+        padding = width - 2 - len(content)
+        return f"{left}  {content}{' ' * padding}{right}"
+    
+    def separator():
+        return f"{BOX_ML}{BOX_H * width}{BOX_MR}"
+    
+    # Print header
+    print(f"\n{BOX_TL}{BOX_H * width}{BOX_TR}")
+    print(line(BOX_V, "📊 MODEL SUMMARY", BOX_V))
+    print(separator())
+    print(line(BOX_V, f"Model: {model_name}", BOX_V))
+    print(line(BOX_V, f"Total Parameters: {total_params:,}", BOX_V))
+    print(line(BOX_V, f"Trainable: {trainable_params:,} ({trainable_pct:.1f}%)", BOX_V))
+    print(line(BOX_V, f"Frozen: {frozen_params:,} ({frozen_pct:.1f}%)", BOX_V))
+    print(line(BOX_V, f"Memory: ~{memory_mb:.1f} MB", BOX_V))
+    print(separator())
+    
+    # Column headers
+    header = f"{'Layer':<36} │ {'Parameters':>12} │ {'Status':<8}"
+    print(line(BOX_V, header, BOX_V))
+    print(separator())
+    
+    # Collect layers
+    def get_module_params(module):
+        return sum(p.numel() for p in module.parameters(recurse=False))
+    
+    def is_trainable(module):
+        params = list(module.parameters(recurse=False))
+        if not params:
+            return None
+        return all(p.requires_grad for p in params)
+    
+    # Print layers
+    shown = 0
+    max_show = 15
+    
+    for name, module in model.named_modules():
+        if not name:
+            continue
+        
+        depth = name.count('.')
+        if depth >= max_depth:
+            continue
+        
+        params = get_module_params(module)
+        if params == 0:
+            continue
+        
+        trainable = is_trainable(module)
+        status = "✓" if trainable else "✗" if trainable is False else ""
+        
+        # Truncate long names
+        display_name = name if len(name) <= 35 else "..." + name[-32:]
+        
+        row = f"{display_name:<36} │ {params:>12,} │ {status:<8}"
+        print(line(BOX_V, row, BOX_V))
+        
+        shown += 1
+        if shown >= max_show:
+            remaining = sum(1 for n, m in model.named_modules() 
+                          if n and n.count('.') < max_depth and get_module_params(m) > 0) - shown
+            if remaining > 0:
+                print(line(BOX_V, f"... and {remaining} more layers", BOX_V))
+            break
+    
+    print(f"{BOX_BL}{BOX_H * width}{BOX_BR}\n")
+

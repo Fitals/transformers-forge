@@ -309,6 +309,123 @@ class TestTrainingMetrics:
         assert hasattr(metrics, 'steps')
         assert isinstance(metrics.losses, list)
 
+class TestProgressCallback:
+    """Тесты для ProgressCallback"""
+    
+    def test_callback_init(self):
+        """Тест инициализации ProgressCallback"""
+        from transformers.training_monitor import ProgressCallback
+        
+        callback = ProgressCallback(
+            show_eta=True,
+            show_gpu=False,
+            show_loss=True,
+            update_every=5
+        )
+        
+        assert callback.show_eta == True
+        assert callback.show_gpu == False
+        assert callback.show_loss == True
+        assert callback.update_every == 5
+    
+    def test_callback_default_init(self):
+        """Тест дефолтной инициализации"""
+        from transformers.training_monitor import ProgressCallback
+        
+        callback = ProgressCallback()
+        
+        assert callback.show_eta == True
+        assert callback.use_unicode == True
+        assert callback.bar_width == 25
+    
+    def test_format_time_seconds(self):
+        """Тест форматирования времени в секундах"""
+        from transformers.training_monitor import ProgressCallback
+        
+        callback = ProgressCallback()
+        
+        result = callback._format_time(45)
+        assert "45s" in result
+    
+    def test_format_time_minutes(self):
+        """Тест форматирования времени в минутах"""
+        from transformers.training_monitor import ProgressCallback
+        
+        callback = ProgressCallback()
+        
+        result = callback._format_time(125)  # 2m 5s
+        assert "2m" in result
+    
+    def test_format_time_hours(self):
+        """Тест форматирования времени в часах"""
+        from transformers.training_monitor import ProgressCallback
+        
+        callback = ProgressCallback()
+        
+        result = callback._format_time(3700)  # 1h 1m
+        assert "1h" in result
+    
+    def test_make_progress_bar(self):
+        """Тест создания прогресс-бара"""
+        from transformers.training_monitor import ProgressCallback
+        
+        callback = ProgressCallback(bar_width=10, use_unicode=True)
+        
+        bar_0 = callback._make_progress_bar(0.0)
+        bar_50 = callback._make_progress_bar(0.5)
+        bar_100 = callback._make_progress_bar(1.0)
+        
+        assert len(bar_0) == 10
+        assert len(bar_50) == 10
+        assert len(bar_100) == 10
+        
+        # 50% должен содержать и заполненные и пустые
+        assert "█" in bar_50
+        assert "░" in bar_50
+    
+    def test_make_progress_bar_ascii(self):
+        """Тест создания ASCII прогресс-бара"""
+        from transformers.training_monitor import ProgressCallback
+        
+        callback = ProgressCallback(bar_width=10, use_unicode=False)
+        
+        bar_50 = callback._make_progress_bar(0.5)
+        
+        assert "#" in bar_50
+        assert "-" in bar_50
+
+
+class TestFormatEta:
+    """Тесты для format_eta"""
+    
+    def test_format_eta_seconds(self):
+        """Тест форматирования секунд"""
+        from transformers.training_monitor import format_eta
+        
+        result = format_eta(30)
+        assert "30s" in result
+    
+    def test_format_eta_minutes(self):
+        """Тест форматирования минут"""
+        from transformers.training_monitor import format_eta
+        
+        result = format_eta(90)
+        assert "1m" in result
+    
+    def test_format_eta_hours(self):
+        """Тест форматирования часов"""
+        from transformers.training_monitor import format_eta
+        
+        result = format_eta(3661)
+        assert "1h" in result
+    
+    def test_format_eta_negative(self):
+        """Тест отрицательного времени"""
+        from transformers.training_monitor import format_eta
+        
+        result = format_eta(-10)
+        assert "..." in result
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

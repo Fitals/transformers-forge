@@ -749,3 +749,317 @@ def print_gpu_status():
         print(f"  Utilization:     {mem['utilization_percent']}%")
         
     print("=" * 60 + "\n")
+
+
+# =============================================================================
+# Rich Training Progress Callback
+# =============================================================================
+
+
+class ProgressCallback(TrainerCallback):
+    """
+    Красивый прогресс-бар с ETA и метриками в реальном времени.
+    
+    Показывает:
+    - Прогресс обучения (шаги, эпохи)
+    - ETA (примерное время до завершения)
+    - Скорость (steps/sec)
+    - GPU память
+    - Текущий loss
+    
+    Example:
+        >>> from transformers import Trainer
+        >>> from transformers.training_monitor import ProgressCallback
+        >>> 
+        >>> trainer = Trainer(
+        ...     model=model,
+        ...     args=training_args,
+        ...     callbacks=[ProgressCallback()]
+        ... )
+        >>> trainer.train()
+    """
+    
+    def __init__(
+        self,
+        show_eta: bool = True,
+        show_gpu: bool = True,
+        show_loss: bool = True,
+        update_every: int = 1,
+        bar_width: int = 25,
+        use_unicode: bool = True
+    ):
+        """
+        Initialize progress callback.
+        
+        Args:
+            show_eta: Show estimated time remaining
+            show_gpu: Show GPU memory usage
+            show_loss: Show current loss
+            update_every: Update display every N steps
+            bar_width: Width of progress bar in characters
+            use_unicode: Use Unicode characters for better visuals
+        """
+        self.show_eta = show_eta
+        self.show_gpu = show_gpu
+        self.show_loss = show_loss
+        self.update_every = update_every
+        self.bar_width = bar_width
+        self.use_unicode = use_unicode
+        
+        self._start_time: Optional[float] = None
+        self._step_times: List[float] = []
+        self._last_loss: Optional[float] = None
+        self._prev_loss: Optional[float] = None
+        self._last_lr: Optional[float] = None
+        self._model_name: str = "Model"
+        
+    def _format_time(self, seconds: float) -> str:
+        """Format seconds into human-readable time."""
+        if seconds < 0:
+            return "..."
+        if seconds < 60:
+            return f"{seconds:.0f}s"
+        elif seconds < 3600:
+            mins = int(seconds // 60)
+            secs = int(seconds % 60)
+            return f"{mins}m {secs}s"
+        else:
+            hours = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            return f"{hours}h {mins}m"
+    
+    def _make_progress_bar(self, progress: float) -> str:
+        """Create ASCII/Unicode progress bar."""
+        progress = max(0, min(1, progress))  # Clamp to [0, 1]
+        filled = int(self.bar_width * progress)
+        empty = self.bar_width - filled
+        
+        if self.use_unicode:
+            return "█" * filled + "░" * empty
+        else:
+            return "#" * filled + "-" * empty
+    
+    def _get_loss_indicator(self) -> str:
+        """Get indicator for loss direction."""
+        if self._prev_loss is None or self._last_loss is None:
+            return " "
+        if self._last_loss < self._prev_loss:
+            return "↓" if self.use_unicode else "v"
+        elif self._last_loss > self._prev_loss:
+            return "↑" if self.use_unicode else "^"
+        return "→" if self.use_unicode else "-"
+    
+    def _get_gpu_info(self) -> Optional[Dict[str, float]]:
+        """Get current GPU memory info."""
+        if not self.show_gpu:
+            return None
+        try:
+            if not is_torch_available() or not torch.cuda.is_available():
+                return None
+            allocated = torch.cuda.memory_allocated() / (1024**3)
+            total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            return {
+                "allocated": allocated,
+                "total": total,
+                "percent": (allocated / total * 100) if total > 0 else 0
+            }
+        except Exception:
+            return None
+    
+    def on_train_begin(
+        self, 
+        args: TrainingArguments, 
+        state: TrainerState, 
+        control: TrainerControl,
+        model=None,
+        **kwargs
+    ):
+        """Called at the beginning of training."""
+        self._start_time = time.time()
+        self._step_times = []
+        
+        # Get model name
+        if model is not None:
+            self._model_name = model.__class__.__name__
+        
+        # Print header
+        if self.use_unicode:
+            print()
+            print("╔" + "═" * 58 + "╗")
+            print(f"║  🔥 TRAINING STARTED" + " " * 37 + "║")
+            print(f"║  Model: {self._model_name[:45]:<45}  ║")
+            print(f"║  Max Steps: {state.max_steps if state.max_steps > 0 else 'auto':<42}  ║")
+            print("╚" + "═" * 58 + "╝")
+            print()
+        else:
+            print()
+            print("=" * 60)
+            print(f"  TRAINING STARTED - {self._model_name}")
+            print(f"  Max Steps: {state.max_steps if state.max_steps > 0 else 'auto'}")
+            print("=" * 60)
+            print()
+    
+    def on_log(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        logs: Dict[str, float] = None,
+        **kwargs
+    ):
+        """Called when logs are written - capture loss and LR."""
+        if logs:
+            if "loss" in logs:
+                self._prev_loss = self._last_loss
+                self._last_loss = logs["loss"]
+            if "learning_rate" in logs:
+                self._last_lr = logs["learning_rate"]
+    
+    def on_step_end(
+        self, 
+        args: TrainingArguments, 
+        state: TrainerState, 
+        control: TrainerControl, 
+        **kwargs
+    ):
+        """Called at the end of each training step."""
+        # Record step time
+        current_time = time.time()
+        self._step_times.append(current_time)
+        
+        # Only update display every N steps
+        if state.global_step % self.update_every != 0:
+            return
+        
+        self._print_progress(args, state)
+    
+    def _print_progress(self, args: TrainingArguments, state: TrainerState):
+        """Print current training progress."""
+        if self._start_time is None:
+            return
+        
+        elapsed = time.time() - self._start_time
+        
+        # Calculate progress
+        if state.max_steps > 0:
+            progress = state.global_step / state.max_steps
+            total_steps_str = str(state.max_steps)
+        else:
+            progress = 0
+            total_steps_str = "?"
+        
+        # Calculate ETA
+        if progress > 0 and self.show_eta:
+            eta_seconds = (elapsed / progress) * (1 - progress)
+            eta_str = self._format_time(eta_seconds)
+        else:
+            eta_str = "..."
+        
+        # Speed
+        steps_per_sec = state.global_step / elapsed if elapsed > 0 else 0
+        
+        # Build progress line
+        bar = self._make_progress_bar(progress)
+        
+        # Main progress info
+        parts = [
+            f"Step {state.global_step:>5}/{total_steps_str}",
+            f"[{bar}]",
+            f"{progress*100:>5.1f}%"
+        ]
+        
+        # ETA
+        if self.show_eta:
+            parts.append(f"ETA: {eta_str}")
+        
+        # Speed
+        parts.append(f"{steps_per_sec:.1f} it/s")
+        
+        # Loss
+        if self.show_loss and self._last_loss is not None:
+            indicator = self._get_loss_indicator()
+            parts.append(f"loss: {self._last_loss:.4f}{indicator}")
+        
+        # GPU memory
+        gpu_info = self._get_gpu_info()
+        if gpu_info:
+            parts.append(f"GPU: {gpu_info['allocated']:.1f}GB")
+        
+        # Print with carriage return for in-place update
+        output = " | ".join(parts)
+        # Add spaces to clear any leftover characters from previous output
+        print(f"\r{output}    ", end="", flush=True)
+    
+    def on_train_end(
+        self, 
+        args: TrainingArguments, 
+        state: TrainerState, 
+        control: TrainerControl, 
+        **kwargs
+    ):
+        """Called at the end of training."""
+        print()  # New line after progress
+        
+        if self._start_time is None:
+            return
+        
+        total_time = time.time() - self._start_time
+        avg_speed = state.global_step / total_time if total_time > 0 else 0
+        
+        # Print summary
+        if self.use_unicode:
+            print()
+            print("╔" + "═" * 58 + "╗")
+            print("║  ✅ TRAINING COMPLETE" + " " * 36 + "║")
+            print("╠" + "═" * 58 + "╣")
+            print(f"║  Total Steps:    {state.global_step:>38}  ║")
+            print(f"║  Total Time:     {self._format_time(total_time):>38}  ║")
+            print(f"║  Average Speed:  {avg_speed:>34.2f} it/s  ║")
+            if self._last_loss is not None:
+                print(f"║  Final Loss:     {self._last_loss:>38.4f}  ║")
+            gpu_info = self._get_gpu_info()
+            if gpu_info:
+                print(f"║  Peak GPU:       {gpu_info['allocated']:>34.1f} GB  ║")
+            print("╚" + "═" * 58 + "╝")
+            print()
+        else:
+            print()
+            print("=" * 60)
+            print("  TRAINING COMPLETE")
+            print("-" * 60)
+            print(f"  Total Steps:    {state.global_step}")
+            print(f"  Total Time:     {self._format_time(total_time)}")
+            print(f"  Average Speed:  {avg_speed:.2f} it/s")
+            if self._last_loss is not None:
+                print(f"  Final Loss:     {self._last_loss:.4f}")
+            print("=" * 60)
+            print()
+        
+        logger.info(f"Training completed in {self._format_time(total_time)}")
+
+
+def format_eta(seconds: float) -> str:
+    """
+    Format seconds into human-readable ETA string.
+    
+    Args:
+        seconds: Number of seconds
+        
+    Returns:
+        Formatted time string
+        
+    Example:
+        >>> format_eta(3661)
+        '1h 1m'
+    """
+    if seconds < 0:
+        return "..."
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        return f"{seconds // 60:.0f}m {seconds % 60:.0f}s"
+    else:
+        hours = seconds // 3600
+        mins = (seconds % 3600) // 60
+        return f"{hours:.0f}h {mins:.0f}m"
+

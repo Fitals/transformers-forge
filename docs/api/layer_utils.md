@@ -332,3 +332,100 @@ unfreezer = GradualUnfreezer(model, total_epochs=10)
 1. **Безопасность:** Все функции только изменяют `requires_grad`, не модифицируют веса
 2. **Обратимость:** Можно в любой момент вызвать `unfreeze_model()`
 3. **Совместимость:** Работает с любой PyTorch моделью
+
+---
+
+## 🆕 Новые утилиты v1.0.6
+
+### get_layer_names
+
+```python
+def get_layer_names(model, include_params: bool = False) -> List[str]
+```
+
+Получить список имён всех слоёв модели.
+
+```python
+from transformers.layer_utils import get_layer_names
+
+# Только модули
+names = get_layer_names(model)
+# ['embed', 'layer1', 'layer2', 'head']
+
+# С параметрами
+names_params = get_layer_names(model, include_params=True)
+# ['embed.weight', 'layer1.weight', 'layer1.bias', ...]
+```
+
+---
+
+### estimate_training_time
+
+```python
+def estimate_training_time(
+    model,
+    num_samples: int,
+    batch_size: int,
+    num_epochs: int,
+    ms_per_step: float = 500.0
+) -> Dict[str, Any]
+```
+
+Оценить время обучения до начала тренировки.
+
+```python
+from transformers.layer_utils import estimate_training_time
+
+estimate = estimate_training_time(
+    model=model,
+    num_samples=50000,
+    batch_size=16,
+    num_epochs=3
+)
+
+print(f"Total steps: {estimate['total_steps']}")
+print(f"Estimated time: {estimate['formatted']}")
+# Total steps: 9375
+# Estimated time: 1h 18m 7s
+```
+
+---
+
+### print_model_summary
+
+```python
+def print_model_summary(model, max_depth: int = 3) -> None
+```
+
+Красивый вывод структуры модели — как `model.summary()` в Keras.
+
+```python
+from transformers.layer_utils import print_model_summary
+
+print_model_summary(model)
+```
+
+**Вывод:**
+
+```
+╔════════════════════════════════════════════════════════════════════════╗
+║  📊 MODEL SUMMARY                                                       ║
+╠════════════════════════════════════════════════════════════════════════╣
+║  Model: GPT2LMHeadModel                                                ║
+║  Total Parameters: 124,439,808                                         ║
+║  Trainable: 124,439,808 (100.0%)                                       ║
+║  Frozen: 0 (0.0%)                                                      ║
+║  Memory: ~475.0 MB                                                     ║
+╠════════════════════════════════════════════════════════════════════════╣
+║  Layer                                │   Parameters │ Status          ║
+╠════════════════════════════════════════════════════════════════════════╣
+║  transformer.wte                      │   38,597,376 │ ✓               ║
+║  transformer.wpe                      │      786,432 │ ✓               ║
+║  transformer.h.0                      │    7,087,872 │ ✓               ║
+║  ...                                                                   ║
+╚════════════════════════════════════════════════════════════════════════╝
+```
+
+- **✓** = trainable (обучаемый)
+- **✗** = frozen (замороженный)
+
