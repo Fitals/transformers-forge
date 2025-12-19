@@ -1,6 +1,6 @@
 # 🔨 Transformers Forge — Документация
 
-**Версия:** 1.1.0  
+**Версия:** 1.1.1  
 **Автор:** Самад Абдулаев (Фиталс)
 
 ---
@@ -17,6 +17,7 @@
 - [Training Presets](api/training_presets.md) — готовые конфиги SFT/LoRA/QLoRA/DPO
 - [Training Monitor](api/training_monitor.md) — мониторинг обучения
 - [Interactive Manager](api/interactive.md) — интерактивная консоль *(v1.0.9)*
+- [LR Finder](api/lr_finder.md) — автоматический подбор learning rate *(v1.1.1)*
 
 ### Tutorials
 - [Быстрый старт](tutorials/quickstart.md)
@@ -57,6 +58,7 @@ print(transformers.__version__)  # 1.0.0
 | **Training Presets** | Готовые конфиги | Быстрый старт |
 | **Training Monitor** | Мониторинг | Отладка обучения |
 | **Interactive Manager** | Wizard для fine-tuning | Упрощённая настройка |
+| **LR Finder** | Подбор learning rate | Оптимальный LR за 2 мин |
 
 ---
 

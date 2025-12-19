@@ -18,7 +18,7 @@
 # to defer the actual importing for when the objects are requested. This way `import transformers` provides the names
 # in the namespace without actually importing anything (and especially none of the backends).
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 import importlib
 import sys
@@ -253,6 +253,11 @@ _import_structure = {
         "update_ema_state",
         "apply_ema_state",
         "compute_optimal_decay",
+    ],
+    "lr_finder": [
+        "LRFinder",
+        "LRFinderResult",
+        "find_optimal_lr",
     ],
     "training_args": ["TrainingArguments"],
     "training_args_seq2seq": ["Seq2SeqTrainingArguments"],
