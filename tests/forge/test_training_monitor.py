@@ -439,6 +439,15 @@ class TestSmartCallbacks:
         assert callback.metric == "eval_loss"
         assert callback.mode == "min"
         assert callback.best_value is None
+        assert callback.interactive == False  # default
+    
+    def test_early_stopping_interactive_mode(self):
+        """Тест interactive режима"""
+        from transformers.training_monitor import EarlyStoppingCallback
+        
+        callback = EarlyStoppingCallback(patience=3, interactive=True)
+        
+        assert callback.interactive == True
     
     def test_early_stopping_invalid_mode(self):
         """Тест неправильного mode"""
@@ -511,6 +520,80 @@ class TestSmartCallbacks:
         callback_max = BestModelCallback(mode="max")
         assert callback_max._is_improvement(0.9, 0.8) == True
         assert callback_max._is_improvement(0.7, 0.8) == False
+
+
+class TestTrainingReportCallback:
+    """Тесты для TrainingReportCallback v1.0.8"""
+    
+    def test_report_callback_init(self):
+        """Тест инициализации TrainingReportCallback"""
+        from transformers.training_monitor import TrainingReportCallback
+        
+        callback = TrainingReportCallback(
+            output_path="./my_report.md",
+            interactive=False
+        )
+        
+        assert callback.output_path == "./my_report.md"
+        assert callback.interactive == False
+        assert callback.include_config == True
+    
+    def test_validate_model_name_valid(self):
+        """Тест валидации правильных имён"""
+        from transformers.training_monitor import TrainingReportCallback
+        
+        callback = TrainingReportCallback()
+        
+        # Valid names
+        valid, _ = callback._validate_model_name("Ivan-3B")
+        assert valid == True
+        
+        valid, _ = callback._validate_model_name("MyModel_v2")
+        assert valid == True
+        
+        valid, _ = callback._validate_model_name("Test123")
+        assert valid == True
+    
+    def test_validate_model_name_invalid_cyrillic(self):
+        """Тест валидации кириллицы (запрещена)"""
+        from transformers.training_monitor import TrainingReportCallback
+        
+        callback = TrainingReportCallback()
+        
+        valid, error = callback._validate_model_name("Иван-3B")
+        assert valid == False
+        assert "a-z" in error.lower() or "разрешены" in error.lower()
+    
+    def test_validate_model_name_too_long(self):
+        """Тест слишком длинного названия"""
+        from transformers.training_monitor import TrainingReportCallback
+        
+        callback = TrainingReportCallback()
+        
+        long_name = "A" * 60
+        valid, error = callback._validate_model_name(long_name)
+        assert valid == False
+        assert "длинное" in error.lower() or "50" in error
+    
+    def test_validate_model_name_too_short(self):
+        """Тест слишком короткого названия"""
+        from transformers.training_monitor import TrainingReportCallback
+        
+        callback = TrainingReportCallback()
+        
+        valid, error = callback._validate_model_name("A")
+        assert valid == False
+        assert "короткое" in error.lower() or "2" in error
+    
+    def test_format_duration(self):
+        """Тест форматирования времени"""
+        from transformers.training_monitor import TrainingReportCallback
+        
+        callback = TrainingReportCallback()
+        
+        assert callback._format_duration(30) == "30s"
+        assert callback._format_duration(90) == "1m 30s"
+        assert callback._format_duration(3661) == "1h 1m 1s"
 
 
 if __name__ == "__main__":

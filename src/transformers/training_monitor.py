@@ -1082,13 +1082,14 @@ class EarlyStoppingCallback(TrainerCallback):
         min_delta: Minimum change to qualify as an improvement
         mode: "min" for metrics that should decrease, "max" for increase
         verbose: Print messages when stopping
+        interactive: If True, ask user Y/N before stopping (default: False)
         
     Example:
         >>> from transformers.training_monitor import EarlyStoppingCallback
         >>> trainer = Trainer(
         ...     model=model,
         ...     args=args,
-        ...     callbacks=[EarlyStoppingCallback(patience=3)]
+        ...     callbacks=[EarlyStoppingCallback(patience=3, interactive=True)]
         ... )
     """
     
@@ -1098,13 +1099,15 @@ class EarlyStoppingCallback(TrainerCallback):
         metric: str = "eval_loss",
         min_delta: float = 0.0,
         mode: str = "min",
-        verbose: bool = True
+        verbose: bool = True,
+        interactive: bool = False
     ):
         self.patience = patience
         self.metric = metric
         self.min_delta = min_delta
         self.mode = mode
         self.verbose = verbose
+        self.interactive = interactive
         
         self.best_value = None
         self.counter = 0
@@ -1119,6 +1122,29 @@ class EarlyStoppingCallback(TrainerCallback):
             return current < best - self.min_delta
         else:
             return current > best + self.min_delta
+    
+    def _ask_user_to_stop(self) -> bool:
+        """Ask user whether to stop training."""
+        print("\n" + "=" * 60)
+        print("⚠️  ВНИМАНИЕ: Обучение стагнирует!")
+        print("=" * 60)
+        print(f"   Нет улучшения {self.patience} оценок подряд.")
+        print(f"   Лучшее значение {self.metric}: {self.best_value:.4f}")
+        print(f"   Дальнейшее обучение может привести к переобучению.")
+        print()
+        print("   Рекомендация: Остановить и использовать сохранённую модель.")
+        print("=" * 60)
+        
+        try:
+            response = input("\n   Остановить обучение? [Y/n]: ").strip().lower()
+            if response in ["", "y", "yes", "да", "д"]:
+                return True
+            else:
+                print("   ▶ Продолжаем обучение...")
+                return False
+        except (EOFError, KeyboardInterrupt):
+            # Non-interactive environment
+            return True
     
     def on_evaluate(
         self,
@@ -1154,11 +1180,22 @@ class EarlyStoppingCallback(TrainerCallback):
                 print(f"⏳ EarlyStopping: No improvement ({self.counter}/{self.patience})")
             
             if self.counter >= self.patience:
-                control.should_training_stop = True
-                self.stopped_epoch = state.epoch
-                if self.verbose:
-                    print(f"\n🛑 EARLY STOPPING at epoch {state.epoch:.1f}")
-                    print(f"   Best {self.metric}: {self.best_value:.4f}")
+                # Interactive mode: ask user
+                if self.interactive:
+                    should_stop = self._ask_user_to_stop()
+                    if should_stop:
+                        control.should_training_stop = True
+                        self.stopped_epoch = state.epoch
+                    else:
+                        # Reset counter if user wants to continue
+                        self.counter = 0
+                else:
+                    # Auto-stop
+                    control.should_training_stop = True
+                    self.stopped_epoch = state.epoch
+                    if self.verbose:
+                        print(f"\n🛑 EARLY STOPPING at epoch {state.epoch:.1f}")
+                        print(f"   Best {self.metric}: {self.best_value:.4f}")
     
     def on_train_end(
         self,
@@ -1370,4 +1407,319 @@ class BestModelCallback(TrainerCallback):
             print(f"   {self.metric}: {self.best_value:.4f}")
             print(f"   Saved at step: {self.best_step}")
             print(f"   Path: {self.save_path}")
+
+
+# =============================================================================
+# v1.0.8 - Training Report Generator
+# =============================================================================
+
+
+class TrainingReportCallback(TrainerCallback):
+    """
+    Callback to generate a beautiful training report after training.
+    
+    Creates a Markdown report with training statistics, metrics history,
+    and configuration details. Optionally allows custom model naming.
+    
+    Args:
+        output_path: Path for the report file (default: "./training_report.md")
+        interactive: If True, asks user to name the model (default: True)
+        include_config: Include training configuration in report
+        
+    Example:
+        >>> from transformers.training_monitor import TrainingReportCallback
+        >>> trainer = Trainer(
+        ...     model=model,
+        ...     args=args,
+        ...     callbacks=[TrainingReportCallback(output_path="./report.md")]
+        ... )
+    """
+    
+    def __init__(
+        self,
+        output_path: str = "./training_report.md",
+        interactive: bool = True,
+        include_config: bool = True
+    ):
+        self.output_path = output_path
+        self.interactive = interactive
+        self.include_config = include_config
+        
+        # State
+        self.custom_model_name = None
+        self.original_model_name = None
+        self.start_time = None
+        self.metrics_history = []
+        self.first_loss = None
+        self.best_loss = None
+        self.best_step = None
+    
+    def _validate_model_name(self, name: str) -> tuple:
+        """
+        Validate model name for allowed characters and length.
+        
+        Returns:
+            tuple: (is_valid: bool, error_message: str)
+        """
+        import re
+        
+        name = name.strip()
+        
+        # Check length
+        if len(name) > 50:
+            return False, "Слишком длинное название (макс. 50 символов)"
+        
+        if len(name) < 2:
+            return False, "Слишком короткое название (мин. 2 символа)"
+        
+        # Only Latin letters, digits, dash, underscore
+        pattern = r'^[a-zA-Z0-9_-]+$'
+        if not re.match(pattern, name):
+            return False, "Разрешены только: a-z, A-Z, 0-9, -, _"
+        
+        return True, ""
+    
+    def _ask_model_name(self, original_name: str) -> str:
+        """
+        Interactive prompt for custom model name.
+        
+        Returns original name if user declines or in non-interactive mode.
+        """
+        print("\n" + "=" * 60)
+        print("📝 ИМЕНОВАНИЕ МОДЕЛИ ДЛЯ ОТЧЁТА")
+        print("=" * 60)
+        print(f"   Оригинальное название: {original_name}")
+        print()
+        print("   [1] Оставить оригинальное название")
+        print("   [2] Задать своё название")
+        print("=" * 60)
+        
+        try:
+            choice = input("\n   Ваш выбор [1/2]: ").strip()
+            
+            if choice != "2":
+                print(f"   ✓ Используем: {original_name}")
+                return original_name
+            
+            # Show naming rules
+            print()
+            print("   ┌─────────────────────────────────────────┐")
+            print("   │            ПРАВИЛА ИМЕНОВАНИЯ           │")
+            print("   ├─────────────────────────────────────────┤")
+            print("   │  • Только латиница (a-z, A-Z)           │")
+            print("   │  • Цифры (0-9)                          │")
+            print("   │  • Дефис (-) и подчёркивание (_)        │")
+            print("   │  • Длина: 2-50 символов                 │")
+            print("   │  • Пример: Ivan-3B, MyModel_v2          │")
+            print("   └─────────────────────────────────────────┘")
+            print()
+            
+            # Validation loop
+            max_attempts = 5
+            for attempt in range(max_attempts):
+                name = input("   Введите название: ").strip()
+                
+                valid, error = self._validate_model_name(name)
+                if valid:
+                    print(f"   ✅ Название принято: {name}")
+                    return name
+                else:
+                    remaining = max_attempts - attempt - 1
+                    if remaining > 0:
+                        print(f"   ❌ {error}")
+                        print(f"   ⟳ Осталось попыток: {remaining}")
+                    else:
+                        print(f"   ❌ Превышено количество попыток")
+                        print(f"   ✓ Используем оригинальное: {original_name}")
+                        return original_name
+            
+            return original_name
+            
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n   ✓ Используем: {original_name}")
+            return original_name
+    
+    def on_train_begin(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        model = None,
+        **kwargs
+    ):
+        import time
+        self.start_time = time.time()
+        
+        # Get original model name
+        if model is not None:
+            self.original_model_name = model.__class__.__name__
+        else:
+            self.original_model_name = "Unknown"
+        
+        # Ask for custom name if interactive
+        if self.interactive:
+            self.custom_model_name = self._ask_model_name(self.original_model_name)
+        else:
+            self.custom_model_name = self.original_model_name
+    
+    def on_log(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        logs: Dict[str, float] = None,
+        **kwargs
+    ):
+        if logs is None:
+            return
+        
+        # Store metrics
+        entry = {
+            "step": state.global_step,
+            "epoch": state.epoch,
+            **logs
+        }
+        self.metrics_history.append(entry)
+        
+        # Track loss
+        if "loss" in logs:
+            loss = logs["loss"]
+            
+            if self.first_loss is None:
+                self.first_loss = loss
+            
+            if self.best_loss is None or loss < self.best_loss:
+                self.best_loss = loss
+                self.best_step = state.global_step
+    
+    def on_train_end(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs
+    ):
+        self._generate_report(args, state)
+    
+    def _format_duration(self, seconds: float) -> str:
+        """Format duration in human readable format."""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m {secs}s"
+        elif minutes > 0:
+            return f"{minutes}m {secs}s"
+        else:
+            return f"{secs}s"
+    
+    def _generate_report(self, args: TrainingArguments, state: TrainerState):
+        """Generate the Markdown training report."""
+        import time
+        from datetime import datetime
+        
+        # Calculate duration
+        end_time = time.time()
+        duration = end_time - self.start_time if self.start_time else 0
+        
+        # Get final loss
+        final_loss = None
+        if self.metrics_history:
+            for entry in reversed(self.metrics_history):
+                if "loss" in entry:
+                    final_loss = entry["loss"]
+                    break
+        
+        # Calculate improvement
+        loss_improvement = None
+        if self.first_loss and final_loss and self.first_loss > 0:
+            loss_improvement = ((self.first_loss - final_loss) / self.first_loss) * 100
+        
+        # Build report
+        lines = []
+        
+        # Header
+        model_display = self.custom_model_name or self.original_model_name
+        lines.append(f"# 📊 Training Report — {model_display}")
+        lines.append("")
+        
+        # Meta info
+        lines.append("## 📋 Информация")
+        lines.append("")
+        lines.append(f"| Параметр | Значение |")
+        lines.append(f"|----------|----------|")
+        lines.append(f"| **Дата** | {datetime.now().strftime('%Y-%m-%d %H:%M')} |")
+        lines.append(f"| **Модель** | {model_display} |")
+        if self.custom_model_name and self.custom_model_name != self.original_model_name:
+            lines.append(f"| **Базовая архитектура** | {self.original_model_name} |")
+        lines.append(f"| **Длительность** | {self._format_duration(duration)} |")
+        lines.append(f"| **Шагов** | {state.global_step:,} |")
+        lines.append(f"| **Эпох** | {state.epoch:.2f} |")
+        lines.append("")
+        
+        # Results
+        lines.append("## 📈 Результаты обучения")
+        lines.append("")
+        
+        if self.first_loss and final_loss:
+            lines.append("| Метрика | Начало | Конец | Изменение |")
+            lines.append("|---------|--------|-------|-----------|")
+            
+            if loss_improvement:
+                arrow = "↓" if loss_improvement > 0 else "↑"
+                lines.append(f"| **Loss** | {self.first_loss:.4f} | {final_loss:.4f} | {arrow} {abs(loss_improvement):.1f}% |")
+            else:
+                lines.append(f"| **Loss** | {self.first_loss:.4f} | {final_loss:.4f} | — |")
+            lines.append("")
+        
+        # Best metrics
+        lines.append("## 🏆 Лучшие показатели")
+        lines.append("")
+        if self.best_loss is not None:
+            lines.append(f"- **Best Loss:** {self.best_loss:.4f} (step {self.best_step:,})")
+        if final_loss is not None:
+            lines.append(f"- **Final Loss:** {final_loss:.4f}")
+        lines.append("")
+        
+        # Configuration
+        if self.include_config:
+            lines.append("## ⚙️ Конфигурация обучения")
+            lines.append("")
+            lines.append("```yaml")
+            lines.append(f"learning_rate: {args.learning_rate}")
+            lines.append(f"batch_size: {args.per_device_train_batch_size}")
+            lines.append(f"num_epochs: {args.num_train_epochs}")
+            lines.append(f"warmup_steps: {args.warmup_steps}")
+            lines.append(f"weight_decay: {args.weight_decay}")
+            lines.append(f"max_grad_norm: {args.max_grad_norm}")
+            if args.fp16:
+                lines.append(f"precision: fp16")
+            elif args.bf16:
+                lines.append(f"precision: bf16")
+            else:
+                lines.append(f"precision: fp32")
+            lines.append("```")
+            lines.append("")
+        
+        # Footer
+        lines.append("---")
+        lines.append("")
+        lines.append("*Generated by Transformers Forge v1.0.8*")
+        
+        # Write file
+        report_content = "\n".join(lines)
+        
+        try:
+            with open(self.output_path, "w", encoding="utf-8") as f:
+                f.write(report_content)
+            
+            print(f"\n📄 TRAINING REPORT GENERATED")
+            print(f"   Path: {self.output_path}")
+            print(f"   Model: {model_display}")
+            if self.best_loss:
+                print(f"   Best Loss: {self.best_loss:.4f}")
+        except Exception as e:
+            print(f"⚠️ Failed to save report: {e}")
+
 

@@ -2,7 +2,7 @@
 
 **Независимый форк библиотеки Transformers с улучшениями качества обучения**
 
-[![Version](https://img.shields.io/badge/version-1.0.7-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.0.8-blue.svg)](CHANGELOG.md)
 [![Tests](https://github.com/Fitals/transformers-forge/actions/workflows/forge-unit-tests.yml/badge.svg)](https://github.com/Fitals/transformers-forge/actions/workflows/forge-unit-tests.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-yellow.svg)](https://python.org)
