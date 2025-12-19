@@ -753,6 +753,163 @@ class InteractiveModelManager:
         # Run training!
         self._run_finetune_training(model, dataset, config)
     
+    def _run_lr_finder_mode(self) -> Optional[Dict[str, Any]]:
+        """
+        Режим Find — автоматический подбор LR через LR Finder.
+        
+        Требует загруженную модель и датасет.
+        """
+        print()
+        print("   ┌─────────────────────────────────────────────────────────────────┐")
+        print("   │ 🔍 РЕЖИМ LR FINDER                                              │")
+        print("   ├─────────────────────────────────────────────────────────────────┤")
+        print("   │  Автоматический подбор оптимального Learning Rate              │")
+        print("   │  На основе метода Leslie Smith (2015)                          │")
+        print("   │                                                                 │")
+        print("   │  ⏱️ Займёт ~30-60 секунд                                        │")
+        print("   │  ✅ Модель не изменится (веса восстановятся)                   │")
+        print("   └─────────────────────────────────────────────────────────────────┘")
+        print()
+        
+        proceed = input("   Запустить LR Finder? [Y/n]: ").strip().lower()
+        if proceed in ["n", "no", "нет", "н"]:
+            print("   ❌ Отменено. Переход к ручной настройке...")
+            return None  # Will fall through to manual mode
+        
+        # Check if model and dataset are selected
+        if not hasattr(self, 'selected_model') or self.selected_model is None:
+            print("   ❌ Модель не выбрана!")
+            return None
+        
+        if not hasattr(self, 'selected_dataset') or self.selected_dataset is None:
+            print("   ❌ Датасет не выбран!")
+            return None
+        
+        model_info = self.selected_model
+        dataset_info = self.selected_dataset
+        
+        print()
+        print(f"   📦 Модель: {model_info.name}")
+        print(f"   📁 Датасет: {dataset_info.name}")
+        print()
+        print("   ⏳ Загрузка модели для LR Finder...")
+        
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from torch.utils.data import DataLoader
+            from datasets import load_dataset
+            from .lr_finder import LRFinder
+        except ImportError as e:
+            print(f"   ❌ Отсутствуют зависимости: {e}")
+            print("      Установите: pip install torch datasets")
+            input("   Нажмите Enter для возврата...")
+            return None
+        
+        try:
+            # Load model
+            model = AutoModelForCausalLM.from_pretrained(
+                model_info.path,
+                trust_remote_code=True,
+                torch_dtype=torch.float32,  # Use float32 for LR finder stability
+            )
+            
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_info.path,
+                trust_remote_code=True
+            )
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            print("   ✅ Модель загружена")
+            
+            # Load and prepare dataset
+            print("   ⏳ Подготовка датасета...")
+            raw_dataset = load_dataset("json", data_files=dataset_info.path, split="train")
+            
+            # Create simple dataloader
+            def collate_fn(batch):
+                texts = []
+                for item in batch:
+                    if "messages" in item:
+                        text = tokenizer.apply_chat_template(
+                            item["messages"],
+                            tokenize=False,
+                            add_generation_prompt=False
+                        )
+                        texts.append(text)
+                    elif "text" in item:
+                        texts.append(item["text"])
+                    else:
+                        # Fallback
+                        texts.append(str(item.get("content", item.get("instruction", ""))))
+                
+                encodings = tokenizer(
+                    texts,
+                    padding=True,
+                    truncation=True,
+                    max_length=512,
+                    return_tensors="pt"
+                )
+                encodings["labels"] = encodings["input_ids"].clone()
+                return encodings
+            
+            dataloader = DataLoader(
+                raw_dataset,
+                batch_size=4,
+                shuffle=True,
+                collate_fn=collate_fn,
+            )
+            
+            print("   ✅ Датасет подготовлен")
+            print()
+            
+            # Run LR Finder
+            finder = LRFinder(model, dataloader, device="auto")
+            result = finder.find(num_steps=50)  # Quick search
+            
+            optimal_lr = result.optimal_lr
+            
+            # Show results
+            print()
+            print("   ┌─────────────────────────────────────────────────────────────────┐")
+            print("   │ 🔍 LR FINDER — РЕЗУЛЬТАТЫ                                       │")
+            print("   ├─────────────────────────────────────────────────────────────────┤")
+            print(f"   │  ✅ Оптимальный Learning Rate: {optimal_lr:.2e}                 │")
+            print("   │                                                                 │")
+            print("   │  Остальные параметры (рекомендованные):                        │")
+            print("   │    • Batch Size: 4                                              │")
+            print("   │    • Epochs: 3                                                  │")
+            print("   │    • LoRA: Да                                                   │")
+            print("   │    • Сохранение: ./output                                       │")
+            print("   └─────────────────────────────────────────────────────────────────┘")
+            print()
+            
+            confirm = input("   Применить найденные настройки? [Y/n]: ").strip().lower()
+            
+            if confirm in ["n", "no", "нет", "н"]:
+                print("   ❌ Отменено. Переход к ручной настройке...")
+                return None
+            
+            print()
+            print(f"   ✅ Применяем LR = {optimal_lr:.2e}")
+            
+            return {
+                "lr": optimal_lr,
+                "batch_size": 4,
+                "epochs": 3,
+                "use_lora": True,
+                "output_dir": "./output"
+            }
+            
+        except Exception as e:
+            print(f"   ❌ Ошибка LR Finder: {e}")
+            import traceback
+            traceback.print_exc()
+            input("   Нажмите Enter для возврата...")
+            return None
+    
+    
     def _get_training_config_interactive(self) -> Optional[Dict[str, Any]]:
         """Get training configuration with validation, presets and Auto mode."""
         self._print_header("⚙️ НАСТРОЙКА ПАРАМЕТРОВ")
@@ -762,15 +919,16 @@ class InteractiveModelManager:
         print("   │ 💡 ПОДСКАЗКА                                                    │")
         print("   ├─────────────────────────────────────────────────────────────────┤")
         print("   │  • Введите 'Auto' — автоматические рекомендованные настройки   │")
+        print("   │  • Введите 'Find' — автоподбор LR через LR Finder (⭐ NEW!)     │")
         print("   │  • Или выбирайте пресеты A/B/C для каждого параметра           │")
         print("   │  • B = рекомендованный (⭐)                                     │")
         print("   └─────────────────────────────────────────────────────────────────┘")
         print()
         
-        # Check for Auto mode
-        auto_check = input("   Режим настройки [Auto/manual]: ").strip().lower()
+        # Check for mode
+        mode_check = input("   Режим настройки [Auto/Find/manual]: ").strip().lower()
         
-        if auto_check in ["auto", "а", "авто", ""]:
+        if mode_check in ["auto", "а", "авто", ""]:
             print()
             print("   ✅ Выбран режим Auto — используем рекомендованные настройки:")
             print("      • Learning Rate: 2e-5")
@@ -785,6 +943,11 @@ class InteractiveModelManager:
                 "use_lora": True,
                 "output_dir": "./output"
             }
+        
+        if mode_check in ["find", "f", "найти", "поиск", "lr"]:
+            return self._run_lr_finder_mode()
+        
+        # Manual mode continues below...
         
         print()
         print("   📝 Ручная настройка параметров")
@@ -1327,7 +1490,7 @@ class InteractiveModelManager:
         print()
         print("╔══════════════════════════════════════════════════════════════════════╗")
         print("║  🔨 TRANSFORMERS FORGE — Interactive Model Manager                   ║")
-        print("║  v1.1.1                                                              ║")
+        print("║  v1.1.2                                                              ║")
         print("╚══════════════════════════════════════════════════════════════════════╝")
         print()
         print(f"   📂 Папка моделей:   {self.models_dir.absolute()}")
