@@ -209,7 +209,84 @@ class BasePreset:
         # Merge with extra_args
         args_dict.update(self.extra_args)
         
-        return TrainingArguments(**args_dict)
+        try:
+            return TrainingArguments(**args_dict)
+        except ImportError as e:
+            if "accelerate" in str(e).lower():
+                raise ImportError(
+                    "Для создания TrainingArguments требуется библиотека accelerate.\n"
+                    "Установите её командой: pip install 'accelerate>=1.1.0'\n\n"
+                    "Альтернатива: используйте preset.get_args_dict() для получения словаря параметров "
+                    "без создания TrainingArguments."
+                ) from e
+            raise
+    
+    def get_args_dict(self) -> Dict[str, Any]:
+        """
+        Получить словарь параметров обучения без создания TrainingArguments.
+        
+        Полезно когда accelerate не установлен или нужен сырой словарь.
+        
+        Returns:
+            Словарь с параметрами обучения
+            
+        Example:
+            >>> preset = LoRAPreset(output_dir="./model")
+            >>> args_dict = preset.get_args_dict()
+            >>> print(args_dict["learning_rate"])
+            0.0002
+        """
+        # Auto-detect precision support
+        bf16_enabled = self.bf16
+        fp16_enabled = self.fp16
+        use_cpu = False
+        
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                bf16_enabled = False
+                fp16_enabled = False
+                use_cpu = True
+            elif bf16_enabled:
+                if not torch.cuda.is_bf16_supported():
+                    bf16_enabled = False
+                    fp16_enabled = True
+        except ImportError:
+            bf16_enabled = False
+            fp16_enabled = False
+            use_cpu = True
+        
+        args_dict = {
+            "output_dir": self.output_dir,
+            "num_train_epochs": self.num_train_epochs,
+            "max_steps": self.max_steps,
+            "per_device_train_batch_size": self.per_device_train_batch_size,
+            "per_device_eval_batch_size": self.per_device_eval_batch_size,
+            "gradient_accumulation_steps": self.gradient_accumulation_steps,
+            "learning_rate": self.learning_rate,
+            "weight_decay": self.weight_decay,
+            "warmup_ratio": self.warmup_ratio,
+            "warmup_steps": self.warmup_steps,
+            "max_grad_norm": self.max_grad_norm,
+            "lr_scheduler_type": self.lr_scheduler_type,
+            "bf16": bf16_enabled,
+            "fp16": fp16_enabled,
+            "logging_steps": self.logging_steps,
+            "save_strategy": self.save_strategy,
+            "save_steps": self.save_steps,
+            "save_total_limit": self.save_total_limit,
+            "eval_strategy": self.eval_strategy,
+            "eval_steps": self.eval_steps,
+            "gradient_checkpointing": self.gradient_checkpointing,
+            "seed": self.seed,
+        }
+        
+        if use_cpu:
+            args_dict["use_cpu"] = True
+        
+        args_dict.update(self.extra_args)
+        
+        return args_dict
     
     def get_effective_batch_size(self, num_gpus: int = 1) -> int:
         """

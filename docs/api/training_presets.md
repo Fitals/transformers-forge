@@ -76,6 +76,7 @@ preset = get_preset("qlora", lora_r=64, learning_rate=1e-4)
 | Метод | Возвращает | Описание |
 |-------|------------|----------|
 | `get_training_args()` | TrainingArguments | Аргументы для Trainer |
+| `get_args_dict()` | Dict | Словарь параметров (без accelerate) *(v1.1.0)* |
 | `get_lora_config()` | LoraConfig | Конфиг LoRA (если применимо) |
 | `get_bnb_config()` | BitsAndBytesConfig | Конфиг квантизации (если применимо) |
 | `print_info()` | None | Вывести информацию о preset |

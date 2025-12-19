@@ -2,7 +2,7 @@
 
 **Независимый форк библиотеки Transformers с улучшениями качества обучения**
 
-[![Version](https://img.shields.io/badge/version-1.0.9-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://github.com/Fitals/transformers-forge/actions/workflows/forge-unit-tests.yml/badge.svg)](https://github.com/Fitals/transformers-forge/actions/workflows/forge-unit-tests.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-yellow.svg)](https://python.org)
@@ -43,7 +43,7 @@ print(transformers.__version__)
 
 ## 🔥 Главные возможности
 
-### 1. EMA — Улучшение качества +1-3%
+### 1. EMA — Улучшение качества +1-3%*
 
 ```python
 from transformers import Trainer
@@ -52,13 +52,15 @@ from transformers.ema import EMACallback
 trainer = Trainer(
     model=model,
     args=args,
-    callbacks=[EMACallback(decay=0.999)]  # +1-3% quality!
+    callbacks=[EMACallback(decay=0.999)]  # +1-3% quality*
 )
 trainer.train()
 
 # Применить EMA веса
 ema_callback.apply_ema(model)
 ```
+
+> ⚠️ **Важно:** Улучшение +1-3% достигается на **моделях >1B параметров** при длительном обучении (10k+ steps). На маленьких моделях эффект может быть минимальным. См. [docs/RESEARCH.md](docs/RESEARCH.md) для деталей.
 
 ### 2. Layer Utils — Заморозка слоёв
 

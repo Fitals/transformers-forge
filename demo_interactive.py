@@ -1,5 +1,5 @@
 """
-Демо Interactive Model Manager v1.0.9
+Демо Interactive Model Manager v1.1.0
 =====================================
 
 Запуск:
@@ -11,7 +11,7 @@ sys.path.insert(0, 'src')
 from transformers.interactive import InteractiveModelManager
 
 print("=" * 70)
-print("🧪 ДЕМО: Interactive Model Manager v1.0.9")
+print("🧪 ДЕМО: Interactive Model Manager v1.1.0")
 print("=" * 70)
 print()
 

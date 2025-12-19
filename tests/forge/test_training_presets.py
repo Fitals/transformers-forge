@@ -170,6 +170,55 @@ class TestPresetDescriptions:
         # Описание может быть в docstring или атрибуте
         assert preset is not None
 
+
+class TestGetArgsDict:
+    """Тесты для метода get_args_dict() (v1.1.0)"""
+    
+    def test_get_args_dict_returns_dict(self):
+        """Тест что get_args_dict возвращает словарь"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("sft")
+        args_dict = preset.get_args_dict()
+        
+        assert isinstance(args_dict, dict)
+    
+    def test_get_args_dict_has_required_keys(self):
+        """Тест что словарь содержит обязательные ключи"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("lora")
+        args_dict = preset.get_args_dict()
+        
+        required_keys = [
+            "output_dir", "learning_rate", "num_train_epochs",
+            "per_device_train_batch_size", "gradient_accumulation_steps"
+        ]
+        
+        for key in required_keys:
+            assert key in args_dict, f"Missing key: {key}"
+    
+    def test_get_args_dict_respects_overrides(self):
+        """Тест что get_args_dict учитывает переопределения"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("sft", learning_rate=1e-4, num_train_epochs=10)
+        args_dict = preset.get_args_dict()
+        
+        assert args_dict["learning_rate"] == 1e-4
+        assert args_dict["num_train_epochs"] == 10
+    
+    def test_get_args_dict_no_accelerate_required(self):
+        """Тест что get_args_dict не требует accelerate"""
+        from transformers.training_presets import get_preset
+        
+        preset = get_preset("qlora")
+        
+        # Не должен падать даже без accelerate
+        args_dict = preset.get_args_dict()
+        assert args_dict is not None
+
+
 class TestConfigValidation:
     """Тесты для валидации конфигурации"""
     

@@ -383,6 +383,17 @@ class EMACallback(TrainerCallback):
         total_params = sum(p.numel() for p in self.ema_state.values())
         memory_mb = total_params * 4 / (1024 * 1024)  # float32
         
+        # Warning for small models (EMA is most effective on large models)
+        # Based on research: Polyak 1992, empirical tests show minimal effect <1B params
+        if total_params < 1_000_000_000:  # 1B parameters
+            param_str = f"{total_params / 1_000_000:.0f}M" if total_params >= 1_000_000 else f"{total_params:,}"
+            logger.warning(
+                f"⚠️ EMA используется на модели с {param_str} параметрами. "
+                f"EMA наиболее эффективен на моделях >1B параметров и при длинном обучении (10k+ steps). "
+                f"На маленьких моделях эффект может быть минимальным или отрицательным. "
+                f"См. docs/RESEARCH.md для деталей."
+            )
+        
         logger.info(
             f"EMA initialized: {total_params:,} parameters, "
             f"~{memory_mb:.1f} MB additional memory"
