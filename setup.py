@@ -384,7 +384,7 @@ install_requires = [
 
 setup(
     name="transformers-forge",
-    version="1.1.2",  # Transformers Forge v1.1.2 - LR Finder Integration
+    version="1.1.3",  # Transformers Forge v1.1.3 - Flash Mode
     author="Самад Абдулаев (Фиталс)",
     author_email="usnul.noxil@gmail.com",
     description="Transformers Forge: Independent community fork with EMA, layer control, training presets, and bug fixes.",

@@ -18,7 +18,7 @@
 # to defer the actual importing for when the objects are requested. This way `import transformers` provides the names
 # in the namespace without actually importing anything (and especially none of the backends).
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 
 import importlib
 import sys
@@ -258,6 +258,10 @@ _import_structure = {
         "LRFinder",
         "LRFinderResult",
         "find_optimal_lr",
+    ],
+    "flash_mode": [
+        "FlashConfig",
+        "FlashModeCallback",
     ],
     "training_args": ["TrainingArguments"],
     "training_args_seq2seq": ["Seq2SeqTrainingArguments"],
