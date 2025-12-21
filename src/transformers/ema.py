@@ -721,3 +721,290 @@ def print_ema_info(
     print(f"Initial weights at end:   {initial_contribution:.4f}%")
     print(f"Update per step:          {(1-decay)*100:.4f}%")
     print("=" * 50 + "\n")
+
+
+# =============================================================================
+# v1.1.4 - Distributed EMA Support
+# =============================================================================
+
+
+def sync_ema_across_processes(
+    ema_state: Dict[str, Any],
+    world_size: int = 1,
+    device: str = "cuda",
+) -> None:
+    """
+    Synchronize EMA state across all distributed processes.
+    
+    In distributed training, each process has its own EMA state.
+    This function averages them to ensure consistency.
+    
+    Should be called periodically (e.g., before evaluation) or at
+    the end of training.
+    
+    Args:
+        ema_state: EMA state dictionary (modified in-place)
+        world_size: Number of processes (auto-detected if not provided)
+        device: Device for synchronization
+        
+    Example:
+        >>> # In distributed training:
+        >>> if is_main_process():
+        ...     sync_ema_across_processes(ema_state)
+        
+    Added in v1.1.4.
+    """
+    try:
+        import torch
+        import torch.distributed as dist
+    except ImportError:
+        return
+    
+    if not dist.is_initialized():
+        return
+    
+    if world_size <= 1:
+        world_size = dist.get_world_size()
+    
+    if world_size <= 1:
+        return
+    
+    with torch.no_grad():
+        for name, tensor in ema_state.items():
+            # All-reduce to sum across all processes
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+            # Average
+            tensor.div_(world_size)
+
+
+def is_distributed() -> bool:
+    """Check if running in distributed mode."""
+    try:
+        import torch.distributed as dist
+        return dist.is_initialized() and dist.get_world_size() > 1
+    except:
+        return False
+
+
+def get_rank() -> int:
+    """Get current process rank (0 if not distributed)."""
+    try:
+        import torch.distributed as dist
+        if dist.is_initialized():
+            return dist.get_rank()
+    except:
+        pass
+    return 0
+
+
+def is_main_process() -> bool:
+    """Check if this is the main process (rank 0)."""
+    return get_rank() == 0
+
+
+class DistributedEMACallback(EMACallback):
+    """
+    EMA Callback with full distributed training support.
+    
+    Extends EMACallback to properly handle:
+    - DDP (DistributedDataParallel)
+    - FSDP (Fully Sharded Data Parallel)
+    - DeepSpeed ZeRO
+    
+    Key features:
+    - Automatic EMA sync across processes
+    - Efficient all-reduce operations
+    - Main process only saving
+    
+    Args:
+        decay: EMA decay factor
+        sync_every: Sync EMA across processes every N steps
+        sync_on_eval: Sync before evaluation
+        save_on_main_only: Only save EMA on main process
+        update_after_step: Start EMA after warmup
+        use_dynamic_decay: Enable dynamic decay scheduling
+        
+    Example:
+        >>> from transformers.ema import DistributedEMACallback
+        >>> 
+        >>> # Works with DDP/FSDP automatically
+        >>> ema_callback = DistributedEMACallback(
+        ...     decay=0.999,
+        ...     sync_every=100,  # Sync every 100 steps
+        ... )
+        >>> trainer = Trainer(
+        ...     model=model,
+        ...     args=args,
+        ...     callbacks=[ema_callback]
+        ... )
+        
+    Added in v1.1.4.
+    """
+    
+    def __init__(
+        self,
+        decay: float = 0.999,
+        update_after_step: int = 0,
+        update_every: int = 1,
+        # Distributed settings
+        sync_every: int = 100,
+        sync_on_eval: bool = True,
+        save_on_main_only: bool = True,
+        # Dynamic decay
+        use_dynamic_decay: bool = False,
+        min_decay: float = 0.9,
+        max_decay: float = 0.999,
+        decay_schedule: str = "linear",
+        total_steps: Optional[int] = None,
+    ):
+        super().__init__(
+            decay=decay,
+            update_after_step=update_after_step,
+            update_every=update_every,
+            use_dynamic_decay=use_dynamic_decay,
+            min_decay=min_decay,
+            max_decay=max_decay,
+            decay_schedule=decay_schedule,
+            total_steps=total_steps,
+        )
+        
+        self.sync_every = sync_every
+        self.sync_on_eval = sync_on_eval
+        self.save_on_main_only = save_on_main_only
+        self._last_sync_step = 0
+        
+        if is_distributed():
+            logger.info(
+                f"DistributedEMACallback: World size = {self._get_world_size()}, "
+                f"sync_every={sync_every}"
+            )
+    
+    def _get_world_size(self) -> int:
+        """Get world size for distributed training."""
+        try:
+            import torch.distributed as dist
+            if dist.is_initialized():
+                return dist.get_world_size()
+        except:
+            pass
+        return 1
+    
+    def _sync_ema(self):
+        """Synchronize EMA state across all processes."""
+        if self.ema_state is None:
+            return
+        
+        world_size = self._get_world_size()
+        if world_size <= 1:
+            return
+        
+        sync_ema_across_processes(self.ema_state, world_size)
+        self._last_sync_step = self._step_count
+        
+        if is_main_process():
+            logger.debug(f"EMA synced across {world_size} processes at step {self._step_count}")
+    
+    def on_step_end(self, args, state, control, model=None, **kwargs):
+        """Update EMA and periodically sync across processes."""
+        # Regular EMA update
+        super().on_step_end(args, state, control, model=model, **kwargs)
+        
+        # Periodic sync
+        if (self.sync_every > 0 and 
+            self._step_count > 0 and 
+            self._step_count % self.sync_every == 0 and
+            self._step_count != self._last_sync_step):
+            self._sync_ema()
+    
+    def on_evaluate(self, args, state, control, model=None, **kwargs):
+        """Sync EMA before evaluation for consistency."""
+        if self.sync_on_eval:
+            self._sync_ema()
+    
+    def on_train_end(self, args, state, control, model=None, **kwargs):
+        """Final sync at end of training."""
+        # Sync one last time
+        self._sync_ema()
+        
+        # Call parent
+        super().on_train_end(args, state, control, model=model, **kwargs)
+    
+    def get_ema_state(self) -> Dict[str, Any]:
+        """
+        Get EMA state for saving.
+        
+        In distributed mode, ensures state is synced before returning.
+        
+        Returns:
+            EMA state dictionary
+        """
+        if self.sync_on_eval:
+            self._sync_ema()
+        
+        return super().get_ema_state()
+    
+    def should_save(self) -> bool:
+        """
+        Check if this process should save EMA state.
+        
+        Returns:
+            True if this process should save (main process or non-distributed)
+        """
+        if not self.save_on_main_only:
+            return True
+        return is_main_process()
+
+
+def unwrap_model(model: Any) -> Any:
+    """
+    Unwrap a model from DDP/FSDP/DeepSpeed wrapper.
+    
+    Gets the underlying model for EMA state access.
+    
+    Args:
+        model: Potentially wrapped model
+        
+    Returns:
+        Unwrapped model
+        
+    Example:
+        >>> unwrapped = unwrap_model(trainer.model)
+        >>> ema_state = create_ema_state(unwrapped)
+    """
+    # DDP
+    if hasattr(model, 'module'):
+        return model.module
+    
+    # DeepSpeed
+    if hasattr(model, 'module') and hasattr(model.module, 'module'):
+        return model.module.module
+    
+    # FSDP - need special handling
+    try:
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        if isinstance(model, FSDP):
+            # For FSDP, return as-is (state dict methods handle unwrapping)
+            return model
+    except ImportError:
+        pass
+    
+    return model
+
+
+def create_distributed_ema_state(model: Any) -> Dict[str, Any]:
+    """
+    Create EMA state handling distributed wrappers.
+    
+    Automatically unwraps DDP/FSDP/DeepSpeed models.
+    
+    Args:
+        model: Model (possibly wrapped)
+        
+    Returns:
+        EMA state dictionary
+        
+    Added in v1.1.4.
+    """
+    unwrapped = unwrap_model(model)
+    return create_ema_state(unwrapped)
+

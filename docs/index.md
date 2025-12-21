@@ -1,6 +1,6 @@
 # 🔨 Transformers Forge — Документация
 
-**Версия:** 1.1.3  
+**Версия:** 1.1.4  
 **Автор:** Самад Абдулаев (Фиталс)
 
 ---
@@ -13,12 +13,14 @@
 
 ### API Reference
 - [EMA (Exponential Moving Average)](api/ema.md) — улучшение качества +1-3%*
-- [Layer Utils](api/layer_utils.md) — заморозка слоёв, LP-LoRA
-- [Training Presets](api/training_presets.md) — готовые конфиги SFT/LoRA/QLoRA/DPO
+- [Layer Utils](api/layer_utils.md) — заморозка слоёв, LP-LoRA, Smart Freeze
+- [Training Presets](api/training_presets.md) — готовые конфиги SFT/LoRA/QLoRA/DPO/CPT/DoRA/ORPO
 - [Training Monitor](api/training_monitor.md) — мониторинг обучения
 - [Interactive Manager](api/interactive.md) — интерактивная консоль *(v1.0.9)*
 - [LR Finder](api/lr_finder.md) — автоматический подбор learning rate *(v1.1.1)*
 - [Flash Mode](api/flash_mode.md) — ускоренное обучение 1.3-1.5x *(v1.1.3)*
+- [Dataset Utils](api/dataset_utils.md) — анализ датасетов *(v1.1.4)*
+- [Adaptive Loss](api/adaptive_loss.md) — адаптивные функции потерь *(v1.1.4)*
 
 ### Tutorials
 - [Быстрый старт](tutorials/quickstart.md)
@@ -45,7 +47,7 @@ pip install -e .
 
 ```python
 import transformers
-print(transformers.__version__)  # 1.0.0
+print(transformers.__version__)  # 1.1.4
 ```
 
 ---
@@ -55,12 +57,14 @@ print(transformers.__version__)  # 1.0.0
 | Модуль | Описание | Польза |
 |--------|----------|--------|
 | **EMA** | Сглаживание весов | +1-3% качества* |
-| **Layer Utils** | Заморозка слоёв | Экономия памяти 50%+ |
-| **Training Presets** | Готовые конфиги | Быстрый старт |
+| **Layer Utils** | Заморозка слоёв + Smart Freeze | Экономия памяти 50%+ |
+| **Training Presets** | 9 готовых конфигов | Быстрый старт |
 | **Training Monitor** | Мониторинг | Отладка обучения |
 | **Interactive Manager** | Wizard для fine-tuning | Упрощённая настройка |
 | **LR Finder** | Подбор learning rate | Оптимальный LR за 2 мин |
 | **Flash Mode** | Ускоренное обучение | 1.3-1.5x быстрее |
+| **Dataset Utils** | Анализ датасетов | Рекомендации по обучению |
+| **Adaptive Loss** | Focal loss, response-only | Фокус на сложных примерах |
 
 ---
 

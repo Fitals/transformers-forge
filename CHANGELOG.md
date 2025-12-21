@@ -7,6 +7,110 @@
 
 ---
 
+## [1.1.4] - 2025-12-21 — Smart Freeze
+
+### ✨ Новые возможности
+
+- **Smart Freeze** — Автоматический подбор оптимального freeze ratio
+  - Анализирует размер модели и доступную GPU память
+  - 4 стратегии: `quality` (25%), `balanced` (50%), `memory` (75%), `aggressive` (85%)
+  - Автоматическая корректировка при нехватке памяти
+  - Оценка требуемой памяти для обучения
+  
+  ```python
+  from transformers import smart_freeze
+  
+  # Автоматическая оптимизация
+  result = smart_freeze(model, strategy="balanced")
+  
+  # Для ограниченной памяти
+  result = smart_freeze(model, strategy="memory", available_memory_gb=8.0)
+  
+  print(f"Frozen {result['freeze_ratio']:.0%} of model")
+  print(f"Estimated memory: {result['estimated_memory_gb']:.1f}GB")
+  ```
+
+- **get_optimal_freeze_ratio()** — Расчёт оптимального freeze ratio без применения
+  - Возвращает рекомендации с объяснением
+  - Учитывает размер модели (+5% freeze за каждый 1B параметров)
+  - Автоматическое определение доступной GPU памяти
+
+- **Dataset Utils** — Модуль утилит для анализа датасетов
+  - `analyze_dataset()` — комплексный анализ с токенизацией
+  - `estimate_tokens()` — быстрая оценка количества токенов
+  - `recommend_batch_size()` — рекомендации batch size на основе данных
+  - `DatasetAnalyzer` — класс с детальными отчётами
+  
+  ```python
+  from transformers import analyze_dataset, DatasetAnalyzer
+  
+  # Быстрый анализ
+  stats = analyze_dataset(dataset, tokenizer)
+  print(f"Total: {stats.total_tokens:,} tokens")
+  print(f"Mean length: {stats.mean_tokens:.1f}")
+  
+  # Детальный отчёт
+  analyzer = DatasetAnalyzer(dataset, tokenizer)
+  analyzer.print_report()
+  rec = analyzer.get_recommendations(model)
+  ```
+
+- **Новые Training Presets** — 3 новых готовых конфигурации
+  - `CPTPreset` — Continued Pre-Training для доменной адаптации
+  - `DoRAPreset` — Weight-Decomposed LoRA (улучшенное качество)
+  - `ORPOPreset` — Odds Ratio Preference Optimization (без ref model)
+  
+  ```python
+  from transformers import get_preset, CPTPreset, DoRAPreset, ORPOPreset
+  
+  # Через реестр
+  preset = get_preset("dora", lora_r=32)
+  
+  # Напрямую
+  preset = ORPOPreset(output_dir="./orpo_model")
+  print(preset.summary())
+  ```
+
+- **Adaptive Loss** — Модуль адаптивного взвешивания loss токенов
+  - `focal_loss()` — Focal loss для фокусировки на сложных примерах
+  - `compute_weighted_loss()` — Взвешенный cross-entropy с настройкой
+  - `compute_response_only_loss()` — Loss только на ответах (instruction tuning)
+  - `AdaptiveLossCallback` — Callback для использования с Trainer
+  
+  ```python
+  from transformers import focal_loss, AdaptiveLossConfig, compute_weighted_loss
+  
+  # Focal loss - фокус на сложных токенах
+  loss = focal_loss(logits, labels, gamma=2.0)
+  
+  # Настраиваемый adaptive loss
+  config = AdaptiveLossConfig(focus_on_hard=True, gamma=2.0)
+  loss = compute_weighted_loss(logits, labels, config)
+  ```
+
+- **EMA Distributed Support** — Полная поддержка distributed training для EMA
+  - `DistributedEMACallback` — Callback с DDP/FSDP/DeepSpeed поддержкой
+  - `sync_ema_across_processes()` — Синхронизация EMA между процессами
+  - `unwrap_model()` — Разворачивание моделей из distributed wrappers
+  - Автоматическая синхронизация перед evaluation
+  
+  ```python
+  from transformers import DistributedEMACallback
+  
+  # Для multi-GPU training
+  ema = DistributedEMACallback(
+      decay=0.999,
+      sync_every=100,  # Sync every 100 steps
+  )
+  trainer.add_callback(ema)
+  ```
+
+### 📚 Документация
+
+- **Синхронизация версий** — все файлы документации обновлены до v1.1.4
+
+---
+
 ## [1.1.3] - 2025-12-20 — Flash Mode
 
 ### ✨ Новые возможности

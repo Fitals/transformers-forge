@@ -319,5 +319,121 @@ class TestNewUtilities:
         assert "Trainable" in captured.out
 
 
+class TestSmartFreeze:
+    """Тесты для Smart Freeze v1.1.4"""
+    
+    @pytest.fixture
+    def model(self):
+        """Создаём тестовую модель"""
+        return SimpleTransformerModel(num_layers=4)
+    
+    def test_get_optimal_freeze_ratio_quality(self, model):
+        """Тест get_optimal_freeze_ratio с quality стратегией"""
+        from transformers.layer_utils import get_optimal_freeze_ratio
+        
+        result = get_optimal_freeze_ratio(model, strategy="quality")
+        
+        assert "optimal_ratio" in result
+        assert "freeze_layers" in result
+        assert "total_layers" in result
+        assert "reason" in result
+        
+        # Quality стратегия должна замораживать ~25%
+        assert 0.0 <= result["optimal_ratio"] <= 0.5
+    
+    def test_get_optimal_freeze_ratio_balanced(self, model):
+        """Тест get_optimal_freeze_ratio с balanced стратегией"""
+        from transformers.layer_utils import get_optimal_freeze_ratio
+        
+        result = get_optimal_freeze_ratio(model, strategy="balanced")
+        
+        # Balanced стратегия должна замораживать ~50%
+        assert 0.25 <= result["optimal_ratio"] <= 0.75
+    
+    def test_get_optimal_freeze_ratio_memory(self, model):
+        """Тест get_optimal_freeze_ratio с memory стратегией"""
+        from transformers.layer_utils import get_optimal_freeze_ratio
+        
+        result = get_optimal_freeze_ratio(model, strategy="memory")
+        
+        # Memory стратегия должна замораживать ~75%
+        assert result["optimal_ratio"] >= 0.5
+    
+    def test_get_optimal_freeze_ratio_aggressive(self, model):
+        """Тест get_optimal_freeze_ratio с aggressive стратегией"""
+        from transformers.layer_utils import get_optimal_freeze_ratio
+        
+        result = get_optimal_freeze_ratio(model, strategy="aggressive")
+        
+        # Aggressive стратегия должна замораживать ~85%
+        assert result["optimal_ratio"] >= 0.7
+    
+    def test_smart_freeze_applies_freezing(self, model):
+        """Тест что smart_freeze действительно замораживает слои"""
+        from transformers.layer_utils import smart_freeze, get_frozen_percentage
+        
+        # Изначально ничего не заморожено
+        initial_pct = get_frozen_percentage(model)
+        assert initial_pct == 0.0
+        
+        # Применяем smart_freeze
+        result = smart_freeze(model, strategy="balanced", verbose=False)
+        
+        # Проверяем результат
+        assert result["frozen_params"] > 0
+        assert result["trainable_params"] > 0
+        assert result["freeze_ratio"] > 0
+        
+        # Проверяем что модель заморожена
+        final_pct = get_frozen_percentage(model)
+        assert final_pct > 0
+    
+    def test_smart_freeze_with_memory_constraint(self, model):
+        """Тест smart_freeze с ограничением памяти"""
+        from transformers.layer_utils import smart_freeze
+        
+        # С очень маленьким лимитом памяти должен увеличить freeze ratio
+        result = smart_freeze(
+            model, 
+            strategy="quality",  # Обычно 25%
+            available_memory_gb=0.1,  # Очень мало памяти
+            verbose=False
+        )
+        
+        # При нехватке памяти freeze_ratio должен быть выше базового
+        assert result["freeze_ratio"] >= 0.25
+    
+    def test_smart_freeze_returns_all_fields(self, model):
+        """Тест что smart_freeze возвращает все нужные поля"""
+        from transformers.layer_utils import smart_freeze
+        
+        result = smart_freeze(model, verbose=False)
+        
+        required_fields = [
+            "frozen_params",
+            "trainable_params", 
+            "total_params",
+            "freeze_ratio",
+            "freeze_layers",
+            "total_layers",
+            "trainable_layers",
+            "strategy",
+            "reason",
+        ]
+        
+        for field in required_fields:
+            assert field in result, f"Missing field: {field}"
+    
+    def test_smart_freeze_verbose_output(self, model, capsys):
+        """Тест что smart_freeze выводит информацию в verbose режиме"""
+        from transformers.layer_utils import smart_freeze
+        
+        smart_freeze(model, verbose=True)
+        
+        captured = capsys.readouterr()
+        assert "SMART FREEZE" in captured.out
+        assert "Strategy" in captured.out or "strategy" in captured.out.lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

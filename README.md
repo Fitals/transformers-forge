@@ -2,7 +2,7 @@
 
 **Независимый форк библиотеки Transformers с улучшениями качества обучения**
 
-[![Version](https://img.shields.io/badge/version-1.1.3-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.4-blue.svg)](CHANGELOG.md)
 [![Tests](https://github.com/Fitals/transformers-forge/actions/workflows/forge-unit-tests.yml/badge.svg)](https://github.com/Fitals/transformers-forge/actions/workflows/forge-unit-tests.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10+-yellow.svg)](https://python.org)
@@ -36,7 +36,7 @@ pip install -e .
 ```python
 import transformers
 print(transformers.__version__)
-# Output: 1.0.0
+# Output: 1.1.4
 ```
 
 ---
@@ -95,6 +95,31 @@ trainer = Trainer(
 )
 ```
 
+### 5. Smart Freeze — Автоматическая заморозка (v1.1.4)
+
+```python
+from transformers import smart_freeze
+
+# Автоматический подбор на основе размера модели и памяти
+result = smart_freeze(model, strategy="balanced")
+print(f"Frozen {result['freeze_ratio']:.0%} of model")
+```
+
+### 6. Dataset Utils — Анализ датасетов (v1.1.4)
+
+```python
+from transformers import analyze_dataset, DatasetAnalyzer
+
+# Быстрый анализ
+stats = analyze_dataset(dataset, tokenizer)
+print(f"Total: {stats.total_tokens:,} tokens")
+
+# Рекомендации по обучению
+analyzer = DatasetAnalyzer(dataset, tokenizer)
+rec = analyzer.get_recommendations(model)
+print(f"Recommended batch size: {rec['batch_size']}")
+```
+
 ---
 
 ## 🐛 Исправленные баги
@@ -128,10 +153,14 @@ trainer = Trainer(
 
 ```
 src/transformers/
-├── ema.py               # EMA для улучшения качества
-├── layer_utils.py       # Заморозка слоёв
-├── training_presets.py  # Готовые конфиги
+├── ema.py               # EMA для улучшения качества (+distributed)
+├── layer_utils.py       # Заморозка слоёв + Smart Freeze
+├── training_presets.py  # Готовые конфиги (SFT/LoRA/QLoRA/DPO/CPT/DoRA/ORPO)
 ├── training_monitor.py  # Мониторинг обучения
+├── adaptive_loss.py     # Адаптивные функции потерь (v1.1.4)
+├── dataset_utils.py     # Утилиты анализа датасетов (v1.1.4)
+├── lr_finder.py         # Автоматический подбор LR
+├── flash_mode/          # Ускоренное обучение 1.3-1.5x (v1.1.3)
 ```
 
 ---
@@ -168,6 +197,6 @@ Apache License 2.0
 
 ---
 
-**🔨 Transformers Forge v1.0.0 — куём лучшее!**
+**🔨 Transformers Forge v1.1.4 — куём лучшее!**
 
 *Created by Самад Абдулаев (Fitals)*

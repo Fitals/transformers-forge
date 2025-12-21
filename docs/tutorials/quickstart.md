@@ -20,7 +20,7 @@ pip install -e .
 import transformers
 print(f"Transformers Forge v{transformers.__version__}")
 
-# Должно вывести: Transformers Forge v1.0.0
+# Должно вывести: Transformers Forge v1.1.4
 ```
 
 ---

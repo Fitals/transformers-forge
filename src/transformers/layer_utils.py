@@ -846,6 +846,266 @@ def get_memory_savings_estimate(model: Any) -> Dict[str, float]:
 
 
 # =============================================================================
+# v1.1.4 - Smart Freeze: Automatic Freeze Ratio Selection
+# =============================================================================
+
+
+def get_optimal_freeze_ratio(
+    model: Any,
+    strategy: str = "balanced",
+    available_memory_gb: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Calculate optimal freeze ratio based on model size, GPU memory, and strategy.
+    
+    This function analyzes the model and available resources to recommend
+    the best freeze ratio for efficient training.
+    
+    Args:
+        model: PyTorch transformer model
+        strategy: One of:
+            - "quality": Minimize freezing, maximize quality (default freeze ~25%)
+            - "balanced": Balance between quality and memory (default freeze ~50%)
+            - "memory": Maximize memory savings (default freeze ~75%)
+            - "aggressive": Maximum freezing for very limited memory (freeze ~85%)
+        available_memory_gb: Available GPU memory in GB. If None, auto-detect.
+        
+    Returns:
+        Dict with:
+            - optimal_ratio: Recommended freeze ratio (0.0 to 1.0)
+            - freeze_layers: Number of layers to freeze
+            - total_layers: Total layers in model
+            - reason: Explanation of the recommendation
+            - estimated_memory_gb: Estimated training memory after freezing
+            
+    Example:
+        >>> result = get_optimal_freeze_ratio(model, strategy="balanced")
+        >>> print(f"Recommended freeze ratio: {result['optimal_ratio']:.0%}")
+        >>> print(f"Freeze {result['freeze_layers']}/{result['total_layers']} layers")
+        >>> print(f"Reason: {result['reason']}")
+    """
+    import math
+    
+    # Get model info
+    total_params = get_total_params(model)
+    num_layers = get_num_layers(model)
+    
+    # Strategy base ratios
+    strategy_ratios = {
+        "quality": 0.25,      # Train 75% of layers
+        "balanced": 0.50,     # Train 50% of layers
+        "memory": 0.75,       # Train 25% of layers  
+        "aggressive": 0.85,   # Train 15% of layers
+    }
+    
+    base_ratio = strategy_ratios.get(strategy, 0.5)
+    
+    # Adjust based on model size
+    # Larger models benefit more from freezing
+    params_in_billions = total_params / 1e9
+    
+    # Size adjustment: +5% for each billion parameters beyond 1B
+    size_adjustment = min(0.15, max(0, params_in_billions - 1) * 0.05)
+    
+    adjusted_ratio = base_ratio + size_adjustment
+    
+    # Check available GPU memory if provided or auto-detect
+    memory_warning = None
+    estimated_memory_gb = None
+    
+    if available_memory_gb is None:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                props = torch.cuda.get_device_properties(0)
+                available_memory_gb = props.total_memory / (1024**3)
+        except:
+            pass
+    
+    if available_memory_gb is not None:
+        # Estimate memory needed for training with current ratio
+        # Formula: model_size + gradients + optimizer_states + activations
+        # Rough estimate: model_size * (1 + 3 * trainable_ratio) for fp16 training
+        
+        trainable_ratio = 1.0 - adjusted_ratio
+        model_memory_gb = (total_params * 2) / (1024**3)  # fp16
+        
+        # Gradients + optimizer for trainable params only
+        grad_optim_memory_gb = (total_params * trainable_ratio * 4 * 3) / (1024**3)
+        
+        # Activation memory estimate (very rough: 2x model size during forward)
+        activation_memory_gb = model_memory_gb * 2
+        
+        estimated_memory_gb = model_memory_gb + grad_optim_memory_gb + activation_memory_gb
+        
+        # If not enough memory, increase freeze ratio
+        if estimated_memory_gb > available_memory_gb * 0.9:  # Leave 10% buffer
+            memory_deficit_ratio = estimated_memory_gb / (available_memory_gb * 0.9)
+            
+            # Increase freezing to reduce memory
+            # Each 10% more freezing saves roughly 10% trainable memory
+            additional_freeze = min(0.3, (memory_deficit_ratio - 1) * 0.5)
+            adjusted_ratio = min(0.9, adjusted_ratio + additional_freeze)
+            
+            memory_warning = f"Increased freeze ratio due to memory constraints ({available_memory_gb:.1f}GB available)"
+            
+            # Recalculate estimated memory
+            trainable_ratio = 1.0 - adjusted_ratio
+            grad_optim_memory_gb = (total_params * trainable_ratio * 4 * 3) / (1024**3)
+            estimated_memory_gb = model_memory_gb + grad_optim_memory_gb + activation_memory_gb
+    
+    # Calculate layers to freeze
+    freeze_layers = int(num_layers * adjusted_ratio)
+    freeze_layers = max(0, min(freeze_layers, num_layers - 1))  # Keep at least 1 layer trainable
+    
+    # Recalculate actual ratio
+    actual_ratio = freeze_layers / num_layers if num_layers > 0 else 0
+    
+    # Build reason
+    reason_parts = [f"Strategy '{strategy}' suggests {base_ratio:.0%} base freeze ratio"]
+    
+    if size_adjustment > 0:
+        reason_parts.append(f"+{size_adjustment:.0%} for {params_in_billions:.1f}B params")
+    
+    if memory_warning:
+        reason_parts.append(memory_warning)
+    
+    reason = ". ".join(reason_parts) + "."
+    
+    return {
+        "optimal_ratio": actual_ratio,
+        "freeze_layers": freeze_layers,
+        "total_layers": num_layers,
+        "trainable_layers": num_layers - freeze_layers,
+        "reason": reason,
+        "strategy": strategy,
+        "total_params": total_params,
+        "estimated_memory_gb": estimated_memory_gb,
+        "available_memory_gb": available_memory_gb,
+    }
+
+
+def smart_freeze(
+    model: Any,
+    strategy: str = "balanced",
+    available_memory_gb: Optional[float] = None,
+    freeze_embeddings: bool = True,
+    verbose: bool = True,
+) -> Dict[str, Any]:
+    """
+    Automatically freeze optimal number of layers based on model and resources.
+    
+    This is the main entry point for automatic layer freezing. It analyzes
+    the model size, available GPU memory, and selected strategy to determine
+    and apply the optimal freeze configuration.
+    
+    Args:
+        model: PyTorch transformer model
+        strategy: Optimization strategy:
+            - "quality": Freeze less, prioritize model quality (~25%)
+            - "balanced": Balance quality and memory (default, ~50%)
+            - "memory": Prioritize memory savings (~75%)
+            - "aggressive": Maximum memory savings (~85%)
+        available_memory_gb: Available GPU memory. Auto-detected if None.
+        freeze_embeddings: Whether to freeze embedding layers (recommended)
+        verbose: Print status messages
+        
+    Returns:
+        Dict with freeze configuration and results:
+            - frozen_params: Number of parameters frozen
+            - trainable_params: Number of trainable parameters
+            - freeze_ratio: Applied freeze ratio
+            - freeze_layers: Layers frozen
+            - total_layers: Total layers
+            - estimated_memory_gb: Estimated training memory
+            
+    Example:
+        >>> # Automatic optimization
+        >>> result = smart_freeze(model, strategy="balanced")
+        
+        >>> # Memory-constrained environment
+        >>> result = smart_freeze(model, strategy="memory", available_memory_gb=8.0)
+        
+        >>> print(f"Frozen {result['freeze_ratio']:.0%} of model")
+        >>> print(f"Estimated memory: {result['estimated_memory_gb']:.1f}GB")
+        
+    Added in v1.1.4.
+    """
+    # Get optimal configuration
+    config = get_optimal_freeze_ratio(
+        model=model,
+        strategy=strategy,
+        available_memory_gb=available_memory_gb,
+    )
+    
+    if verbose:
+        print()
+        print("=" * 60)
+        print("🧊 SMART FREEZE — Automatic Layer Freezing")
+        print("=" * 60)
+        print(f"  Strategy:     {strategy}")
+        print(f"  Model:        {model.__class__.__name__}")
+        print(f"  Parameters:   {config['total_params']:,}")
+        print(f"  Layers:       {config['total_layers']}")
+        if config['available_memory_gb']:
+            print(f"  GPU Memory:   {config['available_memory_gb']:.1f} GB")
+        print("-" * 60)
+        print(f"  📊 Recommendation:")
+        print(f"     Freeze {config['freeze_layers']}/{config['total_layers']} layers ({config['optimal_ratio']:.0%})")
+        print(f"     Train  {config['trainable_layers']}/{config['total_layers']} layers ({1-config['optimal_ratio']:.0%})")
+        if config['estimated_memory_gb']:
+            print(f"     Est. Memory: ~{config['estimated_memory_gb']:.1f} GB")
+        print(f"  💡 {config['reason']}")
+        print("-" * 60)
+    
+    # Apply freezing
+    frozen_count = 0
+    
+    # Freeze layers
+    if config['freeze_layers'] > 0:
+        frozen_count = freeze_first_n_layers(model, config['freeze_layers'])
+    
+    # Freeze embeddings if requested
+    embed_frozen = 0
+    if freeze_embeddings:
+        embed_frozen = freeze_embeddings_func(model)
+        frozen_count += embed_frozen
+    
+    # Get final stats
+    trainable = get_trainable_params(model)
+    frozen = get_frozen_params(model)
+    total = get_total_params(model)
+    
+    if verbose:
+        print(f"  ✅ Applied!")
+        print(f"     Frozen:    {frozen:,} ({frozen/total*100:.1f}%)")
+        print(f"     Trainable: {trainable:,} ({trainable/total*100:.1f}%)")
+        
+        savings = get_memory_savings_estimate(model)
+        print(f"     Saved:     ~{savings['total_saved_gb']:.2f} GB (gradients + optimizer)")
+        print("=" * 60)
+        print()
+    
+    return {
+        "frozen_params": frozen,
+        "trainable_params": trainable,
+        "total_params": total,
+        "freeze_ratio": config['optimal_ratio'],
+        "freeze_layers": config['freeze_layers'],
+        "total_layers": config['total_layers'],
+        "trainable_layers": config['trainable_layers'],
+        "strategy": strategy,
+        "estimated_memory_gb": config['estimated_memory_gb'],
+        "embeddings_frozen": embed_frozen > 0,
+        "reason": config['reason'],
+    }
+
+
+# Alias to avoid name conflict with freeze_embeddings function
+freeze_embeddings_func = freeze_embeddings
+
+
+# =============================================================================
 # v1.0.7 - New Utility Functions
 # =============================================================================
 

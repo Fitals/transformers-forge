@@ -18,7 +18,7 @@
 # to defer the actual importing for when the objects are requested. This way `import transformers` provides the names
 # in the namespace without actually importing anything (and especially none of the backends).
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 
 import importlib
 import sys
@@ -221,6 +221,9 @@ _import_structure = {
         "QLoRAPreset",
         "DPOPreset",
         "MemoryEfficientPreset",
+        "CPTPreset",
+        "DoRAPreset",
+        "ORPOPreset",
         "get_preset",
         "list_presets",
         "quick_sft_args",
@@ -245,6 +248,8 @@ _import_structure = {
         "GradualUnfreezer",
         "setup_lp_lora_style",
         "get_memory_savings_estimate",
+        "smart_freeze",
+        "get_optimal_freeze_ratio",
     ],
     "ema": [
         "EMACallback",
@@ -253,6 +258,9 @@ _import_structure = {
         "update_ema_state",
         "apply_ema_state",
         "compute_optimal_decay",
+        "DistributedEMACallback",
+        "sync_ema_across_processes",
+        "unwrap_model",
     ],
     "lr_finder": [
         "LRFinder",
@@ -262,6 +270,23 @@ _import_structure = {
     "flash_mode": [
         "FlashConfig",
         "FlashModeCallback",
+    ],
+    "dataset_utils": [
+        "DatasetStats",
+        "DatasetAnalyzer",
+        "analyze_dataset",
+        "estimate_tokens",
+        "recommend_batch_size",
+        "quick_dataset_check",
+    ],
+    "adaptive_loss": [
+        "AdaptiveLossConfig",
+        "AdaptiveLossCallback",
+        "compute_weighted_loss",
+        "create_loss_mask",
+        "focal_loss",
+        "compute_response_only_loss",
+        "get_token_loss_distribution",
     ],
     "training_args": ["TrainingArguments"],
     "training_args_seq2seq": ["Seq2SeqTrainingArguments"],

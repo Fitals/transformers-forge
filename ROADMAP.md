@@ -38,8 +38,8 @@
 ### Планируемые улучшения (Q1 2025)
 
 #### Новые модули
-- [ ] **Adaptive Loss** — Адаптивное взвешивание loss для разных токенов
-- [ ] **Dataset Utils** — Утилиты для работы с датасетами
+- [x] **Adaptive Loss** — Адаптивное взвешивание loss для разных токенов *(v1.1.4)*
+- [x] **Dataset Utils** — Утилиты для работы с датасетами *(v1.1.4)*
 - [ ] **Inference Optimizations** — Оптимизации для инференса
 
 #### Интеграции
@@ -48,9 +48,9 @@
 - [ ] Интеграция с TensorBoard
 
 #### Улучшения существующих модулей
-- [ ] EMA: Поддержка distributed training
-- [ ] Training Presets: Больше готовых конфигов
-- [ ] Layer Utils: Автоматический подбор freeze ratio
+- [x] EMA: Поддержка distributed training *(v1.1.4)*
+- [x] Training Presets: Больше готовых конфигов *(v1.1.4: CPT, DoRA, ORPO)*
+- [x] Layer Utils: Автоматический подбор freeze ratio *(v1.1.4)*
 
 ---
 

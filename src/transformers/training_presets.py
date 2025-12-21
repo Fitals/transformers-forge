@@ -849,6 +849,214 @@ class MemoryEfficientPreset(BasePreset):
 
 
 # =============================================================================
+# v1.1.4 - New Presets: CPT, DoRA, ORPO
+# =============================================================================
+
+
+@dataclass
+class CPTPreset(BasePreset):
+    """
+    Preset for Continued Pre-Training (CPT).
+    
+    Optimized for continuing pre-training on domain-specific data.
+    Uses causal language modeling objective with larger batch sizes.
+    
+    Recommended for:
+    - Domain adaptation (medical, legal, code)
+    - Knowledge injection
+    - Vocabulary extension training
+    
+    Example:
+        >>> preset = CPTPreset(output_dir="./cpt_model")
+        >>> args = preset.get_training_args()
+        >>> 
+        >>> trainer = Trainer(
+        ...     model=model,
+        ...     args=args,
+        ...     train_dataset=domain_dataset,
+        ... )
+    
+    Added in v1.1.4.
+    """
+    
+    # CPT uses very low learning rate to avoid forgetting
+    learning_rate: float = field(default=1e-5)
+    
+    # Lower warmup for stable continuation
+    warmup_ratio: float = field(default=0.05)
+    
+    # Larger effective batch for pre-training
+    per_device_train_batch_size: int = field(default=4)
+    gradient_accumulation_steps: int = field(default=8)
+    
+    # More epochs for domain absorption
+    num_train_epochs: float = field(default=3.0)
+    
+    # Linear scheduler for smooth continuation
+    lr_scheduler_type: str = field(default="linear")
+    
+    # Gradient checkpointing for longer sequences
+    gradient_checkpointing: bool = field(default=True)
+    
+    # Weight decay for regularization
+    weight_decay: float = field(default=0.1)
+    
+    # Max sequence length for CPT (usually longer)
+    max_seq_length: int = field(default=2048)
+    
+    def summary(self) -> str:
+        """Get summary with CPT-specific settings."""
+        base = super().summary()
+        cpt_info = [
+            "",
+            "CPT Settings:",
+            f"  max_seq_length: {self.max_seq_length}",
+            f"  Note: Low LR ({self.learning_rate}) to preserve pre-training",
+        ]
+        return base + "\n" + "\n".join(cpt_info)
+
+
+@dataclass
+class DoRAPreset(LoRAPreset):
+    """
+    Preset for DoRA (Weight-Decomposed Low-Rank Adaptation).
+    
+    DoRA decomposes weights into magnitude and direction components,
+    providing better fine-tuning results than standard LoRA with
+    minimal additional overhead.
+    
+    Based on: "DoRA: Weight-Decomposed Low-Rank Adaptation" (Liu et al., 2024)
+    
+    Recommended for:
+    - When LoRA quality is insufficient
+    - Tasks requiring fine-grained adaptation
+    - When you can afford slightly more compute
+    
+    Requires:
+    - PEFT >= 0.10.0 with DoRA support
+    
+    Example:
+        >>> from peft import LoraConfig
+        >>> preset = DoRAPreset(output_dir="./dora_model")
+        >>> lora_config = LoraConfig(**preset.get_lora_config())
+        >>> 
+        >>> # lora_config will have use_dora=True
+    
+    Added in v1.1.4.
+    """
+    
+    # DoRA flag
+    use_dora: bool = field(default=True)
+    
+    # DoRA works well with higher rank
+    lora_r: int = field(default=16)
+    lora_alpha: int = field(default=32)
+    
+    # Slightly lower LR for DoRA stability
+    learning_rate: float = field(default=1e-4)
+    
+    def get_lora_config(self) -> Dict[str, Any]:
+        """Get DoRA-enabled LoRA configuration."""
+        config = super().get_lora_config()
+        config["use_dora"] = self.use_dora
+        return config
+    
+    def summary(self) -> str:
+        """Get summary with DoRA-specific settings."""
+        base = super().summary()
+        dora_info = [
+            "",
+            "DoRA Settings:",
+            f"  use_dora: {self.use_dora}",
+            f"  Note: Weight decomposition for better quality",
+        ]
+        return base + "\n" + "\n".join(dora_info)
+
+
+@dataclass  
+class ORPOPreset(BasePreset):
+    """
+    Preset for ORPO (Odds Ratio Preference Optimization).
+    
+    ORPO combines SFT + preference optimization in a single stage,
+    eliminating the need for a separate reference model (unlike DPO).
+    More memory-efficient than DPO.
+    
+    Based on: "ORPO: Monolithic Preference Optimization without Reference Model"
+    (Hong et al., 2024)
+    
+    Recommended for:
+    - When DPO is too memory-heavy
+    - Single-stage preference optimization
+    - Faster training than DPO
+    
+    Requires:
+    - TRL >= 0.8.0 with ORPO support
+    - Preference dataset with chosen/rejected pairs
+    
+    Example:
+        >>> from trl import ORPOTrainer, ORPOConfig
+        >>> preset = ORPOPreset(output_dir="./orpo_model")
+        >>> 
+        >>> training_args = ORPOConfig(
+        ...     **preset.get_args_dict(),
+        ...     beta=preset.orpo_beta,
+        ... )
+    
+    Added in v1.1.4.
+    """
+    
+    # ORPO-specific hyperparameter (lambda)
+    orpo_beta: float = field(default=0.1)
+    
+    # ORPO uses moderate learning rate
+    learning_rate: float = field(default=5e-6)
+    
+    # Standard optimizer
+    lr_scheduler_type: str = field(default="cosine")
+    
+    # Warmup for stability
+    warmup_ratio: float = field(default=0.1)
+    
+    # Batch configuration (ORPO processes pairs)
+    per_device_train_batch_size: int = field(default=2)
+    gradient_accumulation_steps: int = field(default=8)
+    
+    # Gradient checkpointing for memory
+    gradient_checkpointing: bool = field(default=True)
+    
+    # Max sequence length
+    max_length: int = field(default=1024)
+    max_prompt_length: int = field(default=512)
+    
+    def get_orpo_config(self) -> Dict[str, Any]:
+        """
+        Get ORPO-specific configuration for TRL.
+        
+        Returns:
+            Dict with ORPO hyperparameters
+        """
+        return {
+            "beta": self.orpo_beta,
+            "max_length": self.max_length,
+            "max_prompt_length": self.max_prompt_length,
+        }
+    
+    def summary(self) -> str:
+        """Get summary with ORPO-specific settings."""
+        base = super().summary()
+        orpo_info = [
+            "",
+            "ORPO Settings:",
+            f"  beta: {self.orpo_beta}",
+            f"  max_length: {self.max_length}",
+            f"  max_prompt_length: {self.max_prompt_length}",
+            f"  Note: No reference model needed (unlike DPO)",
+        ]
+        return base + "\n" + "\n".join(orpo_info)
+
+
+# =============================================================================
 # Preset Registry and Factory
 # =============================================================================
 
@@ -861,6 +1069,10 @@ _PRESET_REGISTRY: Dict[str, type] = {
     "dpo": DPOPreset,
     "memory_efficient": MemoryEfficientPreset,
     "memory": MemoryEfficientPreset,  # alias
+    # v1.1.4 new presets
+    "cpt": CPTPreset,
+    "dora": DoRAPreset,
+    "orpo": ORPOPreset,
 }
 
 

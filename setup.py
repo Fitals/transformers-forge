@@ -384,7 +384,7 @@ install_requires = [
 
 setup(
     name="transformers-forge",
-    version="1.1.3",  # Transformers Forge v1.1.3 - Flash Mode
+    version="1.1.4",  # Transformers Forge v1.1.4 - Documentation Sync
     author="Самад Абдулаев (Фиталс)",
     author_email="usnul.noxil@gmail.com",
     description="Transformers Forge: Independent community fork with EMA, layer control, training presets, and bug fixes.",
